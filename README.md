@@ -1,0 +1,124 @@
+# 小红书评论 Agent（DeepSeek Harness 插件）
+
+按关键词找笔记 → 抓一级/二级评论 → 按规则筛选 → 生成回复草稿 → **人工点一下才发**。
+带本地控制台和「客户配置清单」Excel 导入，适合交付给非技术同学使用。
+
+> 不是爬虫框架，也不是群控工具：默认干跑、有配额、有去重、有熔断，发送必须经过人。
+
+---
+
+## 它解决什么
+
+运营要在自己领域的小红书笔记下**真实地参与讨论**，但手工做有三件事很痛：
+
+1. 找帖：关键词一搜几十篇，逐篇点开看评论，费时间；
+2. 判断：几百条评论里只有少数值得回，肉眼筛容易漏也容易回错；
+3. 分寸：回快了、回多了、话术重复，账号容易被限流。
+
+这个插件把 1、2 自动化，把 3 做成硬约束（配额/去重/间隔/熔断），把「发不发」留给人。
+
+---
+
+## 快速开始
+
+### 方式一：下载部署包（推荐给实施同学）
+
+1. 到 [Releases](../../releases) 下载 `xhs-comment-agent-<version>.zip`
+2. 解压，在**管理员 PowerShell** 里执行：
+
+```powershell
+cd <解压目录>\xhs-comment-agent
+powershell -NoProfile -ExecutionPolicy Bypass -File .\deploy\install.ps1
+```
+
+3. 首次扫码登录（只一次）：
+
+```powershell
+cd "$env:USERPROFILE\.dsh\xhs-agent"
+& "$env:USERPROFILE\.dsh\runtimes\xiaohongshu-login.exe"
+```
+
+4. 托盘退出 DSH 再打开
+5. 浏览器打开 <http://127.0.0.1:18765/>
+
+完整步骤与排错见 [deploy/部署说明.md](deploy/部署说明.md)。
+
+### 方式二：从源码装
+
+```powershell
+git clone <this-repo>
+cd <repo>
+powershell -NoProfile -ExecutionPolicy Bypass -File .\deploy\install.ps1 -SkipDownload
+```
+
+安装器会把 `bundle/src` 复制到 `%USERPROFILE%\.dsh\plugins\xhs-comment-agent`，并在 DSH profile 的
+`cordis.patch.yml` 里登记一行（幂等，重复执行只覆盖同一行，写前自动备份）。
+
+---
+
+## 装了之后有什么
+
+### 对话里的 6 个工具
+
+| 工具 | 作用 |
+|---|---|
+| `xhs_status` | 服务/登录/配额/熔断状态 |
+| `xhs_login` | 取登录二维码（PNG），扫码后自动确认 |
+| `xhs_search` | 关键词搜索 + 笔记预筛（点赞/标题词） |
+| `xhs_comments` | 抓评论，自动展开「展开 N 条回复」，返回一/二级候选 |
+| `xhs_plan` | 把候选 + 文案写成草稿（不发送） |
+| `xhs_reply` | 回复指定评论；干跑只回显，真发需 `confirm` |
+
+### 本地控制台 `http://127.0.0.1:18765/`
+
+- 状态条：服务在线、登录账号、今日/本小时配额、已发送数、是否熔断
+- 规则表单：关键词、必含词、黑名单、字数、单篇/小时/天上限、最小间隔、干跑开关
+- **导入客户配置清单（.xlsx）**：解析预览 → 应用到系统 → 立即生效
+- 待审草稿：评论原文 + 可改的回复 + 「发送这条」/「跳过」
+
+### 客户配置清单
+
+[examples/客户配置清单-模板.xlsx](examples/客户配置清单-模板.xlsx)：5 张表 + 填写说明，
+客户只填 B 列，关键项有下拉框。填好直接拖进面板即可。
+
+---
+
+## 安全与合规
+
+**默认是安全的：**
+
+- 干跑（`dry_run: true`）时任何发送请求都会被拒绝；
+- 以 `comment_id` 为键去重，同一条评论永不重复回复；
+- 小时/天双配额 + 最小间隔 45s（可调）；
+- 检测到验证码/频繁/未登录，立即**全局熔断**停止发送；
+- 面板只监听 `127.0.0.1`，不对外提供服务；`cookies.json` 只存在本机，不上传任何地方。
+
+**风险提示：**
+
+- 自动化互动违反平台用户协议的边界，批量评论是平台重点治理对象；账号受限的风险由使用者承担。
+- 别关配额、别发模板文案、别在回复里导流或报价。
+- 本仓库不包含任何账号凭据；issue 里也不要贴 cookie 或二维码截图。
+
+---
+
+## 目录结构
+
+```
+bundle/src/        插件源码（零运行时依赖）
+  index.js         宿主插件：工具注册、sidecar 托管、配额/去重/熔断
+  panel.js/.html   本地控制台
+  xlsx.js          零依赖 xlsx 读取（ZIP + sharedStrings + sheet）
+  mapping.js       Excel → rules.json 映射
+deploy/            安装器 / 卸载器 / 部署说明
+examples/          客户配置清单模板与示例
+```
+
+## 依赖
+
+- Windows 10/11 x64，DeepSeek Harness 桌面端（至少启动过一次）
+- [xiaohongshu-mcp](https://github.com/xpzouying/xiaohongshu-mcp) 的预编译二进制（安装器自动下载，Apache-2.0）
+- 不需要 Node / Python / Docker —— 插件跑在 DSH 宿主进程里
+
+## License
+
+见 [LICENSE](LICENSE)。本仓库不分发 xiaohongshu-mcp 源码，仅按其许可证在安装时下载官方二进制。
