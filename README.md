@@ -90,6 +90,10 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\deploy\install.ps1 -SkipDo
 **默认是安全的：**
 
 - 干跑（`dry_run: true`）时任何发送请求都会被拒绝；
+- **发送强门禁**：非干跑时还需要一张「人工批准票据」——只有面板/右侧栏的「发送这条」能签发，
+  一次性、5 分钟有效、绑定文案哈希。`xhs_reply` 工具没有票据会被拒绝（`need_human_approval`），
+  **agent 无法自行发送**；
+- 禁用词（`banned_words`）在发送前强制校验，命中即拒绝并指出是哪个词；
 - 以 `comment_id` 为键去重，同一条评论永不重复回复；
 - 小时/天双配额 + 最小间隔 45s（可调）；
 - 检测到验证码/频繁/未登录，立即**全局熔断**停止发送；

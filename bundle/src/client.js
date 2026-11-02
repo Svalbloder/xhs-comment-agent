@@ -78,6 +78,7 @@
           daily_quota: (s.rules.reply_policy || {}).daily_quota ?? 20,
           min_interval_sec: (s.rules.reply_policy || {}).min_interval_sec ?? 45,
           max_chars: (s.rules.reply_style || {}).max_chars ?? 60,
+          banned_words: ((s.rules.reply_style || {}).banned_words || []).join('\n'),
           dry_run: !!(s.rules.dry_run ?? s.status.dryRun),
         })
       }, [])
@@ -94,7 +95,7 @@
           body: JSON.stringify({
             comment_gate: { level: [1, 2], must_any: lines(form.must_any), must_not: lines(form.must_not), max_len: +form.max_len || 120 },
             reply_policy: { max_per_note: +form.max_per_note || 2, hourly_quota: +form.hourly_quota || 5, daily_quota: +form.daily_quota || 20, min_interval_sec: +form.min_interval_sec || 45 },
-            reply_style: { max_chars: +form.max_chars || 60 },
+            reply_style: { max_chars: +form.max_chars || 60, banned_words: lines(form.banned_words) },
             dry_run: !!form.dry_run,
           }),
         })
@@ -168,6 +169,8 @@
           h('textarea', { className: 'xhs-area', value: form.must_any, onChange: (e) => setForm({ ...form, must_any: e.target.value }) }),
           h('label', { className: 'xhs-label' }, '评论不能包含（黑名单）'),
           h('textarea', { className: 'xhs-area', value: form.must_not, onChange: (e) => setForm({ ...form, must_not: e.target.value }) }),
+          h('label', { className: 'xhs-label' }, '回复里禁用词（每行一个，命中直接拒绝发送）'),
+          h('textarea', { className: 'xhs-area', value: form.banned_words, onChange: (e) => setForm({ ...form, banned_words: e.target.value }) }),
           h('div', { className: 'xhs-row' },
             h('div', null, h('label', { className: 'xhs-label' }, '评论字数上限'),
               h('input', { className: 'xhs-input', type: 'number', value: form.max_len, onChange: (e) => setForm({ ...form, max_len: e.target.value }) })),

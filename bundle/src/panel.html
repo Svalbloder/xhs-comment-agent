@@ -64,6 +64,8 @@
         <textarea id="must_any" placeholder="多少钱&#10;求链接&#10;怎么选"></textarea>
         <label>评论必须不含（每行一个，黑名单）</label>
         <textarea id="must_not" placeholder="加微&#10;私信&#10;代购"></textarea>
+        <label>回复里禁用词（每行一个，命中直接拒绝发送）</label>
+        <textarea id="banned_words" placeholder="微信&#10;链接&#10;最低价"></textarea>
       </div>
       <div class="col">
         <label>评论最大字数</label>
@@ -127,6 +129,7 @@ async function load(){
   $('keywords').value = (r0.keywords||[]).join(', ')
   $('must_any').value = (cg.must_any||[]).join('\n')
   $('must_not').value = (cg.must_not||[]).join('\n')
+  $('banned_words').value = (rs.banned_words||[]).join('\n')
   $('max_len').value = cg.max_len != null ? cg.max_len : 120
   $('max_per_note').value = rp.max_per_note != null ? rp.max_per_note : 2
   $('hourly_quota').value = rp.hourly_quota != null ? rp.hourly_quota : 5
@@ -145,7 +148,7 @@ async function saveRules(){
     keywords: $('keywords').value.split(',').map(function(s){return s.trim()}).filter(Boolean),
     comment_gate: { level:[1,2], must_any: lines('must_any'), must_not: lines('must_not'), max_len: +$('max_len').value || 120 },
     reply_policy: { max_per_note:+$('max_per_note').value||2, hourly_quota:+$('hourly_quota').value||5, daily_quota:+$('daily_quota').value||20, min_interval_sec:+$('min_interval_sec').value||45 },
-    reply_style: { max_chars:+$('max_chars').value||60 },
+    reply_style: { max_chars:+$('max_chars').value||60, banned_words: lines('banned_words') },
     dry_run: $('dryRun').checked
   }
   const r = await fetch('/api/rules', {method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify(body)})

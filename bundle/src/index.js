@@ -10,6 +10,7 @@
  *   filters → 必须是对象，不是数组（数组会 400 INVALID_REQUEST）
  */
 import { spawn } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
@@ -103,11 +104,41 @@ function applyInner(ctx, config = {}) {
   if (!state.sent) state.sent = {}
   if (!Array.isArray(state.incidents)) state.incidents = []
   if (!Array.isArray(state.skipped)) state.skipped = []
+  // 人工批准凭证：只有 UI 的点击路径能签发，是一次性、5 分钟有效的票据。
+  if (!state.approvals || typeof state.approvals !== 'object') state.approvals = {}
 
   // 面板上的「干跑」开关写在 rules.json 的 dry_run 上，优先级高于插件配置。
   const effDryRun = () => {
     const r = getRules()
     return typeof r.dry_run === 'boolean' ? r.dry_run : dryRun
+  }
+
+  // 审核硬门禁：默认开启。关掉它就是"agent 可以自己发"，只建议在可信环境这么做。
+  const requireApproval = () => {
+    const r = getRules()
+    return r.require_approval !== false
+  }
+
+  const APPROVAL_TTL_MS = 5 * 60 * 1000
+  const textHash = (s) => createHash('sha1').update(String(s)).digest('hex').slice(0, 16)
+
+  /** 由 UI 的点击路径调用：给 (commentId, 文案) 签发一张一次性票据。 */
+  const mintApproval = (commentId, text) => {
+    state.approvals[String(commentId)] = { at: Date.now(), h: textHash(text), used: false }
+    persist()
+    log(`approval minted for ${commentId}`)
+  }
+
+  /** 校验并消费票据；返回 null 表示放行，否则返回拒绝原因。 */
+  const consumeApproval = (commentId, text) => {
+    const a = state.approvals[String(commentId)]
+    if (!a) return 'need_human_approval'
+    if (a.used) return 'approval_already_used'
+    if (Date.now() - a.at > APPROVAL_TTL_MS) { delete state.approvals[String(commentId)]; persist(); return 'approval_expired' }
+    if (a.h !== textHash(text)) return 'text_changed_after_approval'
+    a.used = true
+    persist()
+    return null
   }
 
   const persist = () => writeFileSync(statePath, JSON.stringify(state, null, 2))
@@ -194,8 +225,37 @@ function applyInner(ctx, config = {}) {
     return null
   }
 
-  // 唯一的真实发送入口：xhs_reply 工具和面板「发送」都走这里。
+  // 唯一的真实发送入口：面板「发送」和 xhs_reply 工具都走这里。
+  // 三道闸：内容校验（禁用词/字数）→ 人工批准票据 → 平台调用。
   const doSend = async ({ feedId, xsecToken, commentId, text }) => {
+    const rules = getRules()
+    const rs = rules.reply_style ?? {}
+
+    // 1) 禁用词：客户在 Excel 里填的，必须真的执行
+    for (const w of rs.banned_words ?? []) {
+      if (w && String(text).includes(w)) {
+        return { ok: false, blocked: 'banned_word', word: w, hint: `回复里出现了禁用词「${w}」` }
+      }
+    }
+
+    // 2) 字数
+    const maxChars = rs.max_chars ?? 60
+    if (String(text).length > maxChars) {
+      return { ok: false, blocked: 'too_long', limit: maxChars, length: String(text).length }
+    }
+
+    // 3) 人工批准：票据只能由 UI 点击签发，agent 自己拿不到
+    if (requireApproval()) {
+      const deny = consumeApproval(commentId, text)
+      if (deny) {
+        return {
+          ok: false,
+          blocked: deny,
+          next: '这条需要人在面板/右侧栏点「发送这条」；agent 无法自行批准',
+        }
+      }
+    }
+
     try {
       await api('/feeds/comment/reply', {
         feed_id: feedId,
@@ -260,7 +320,9 @@ function applyInner(ctx, config = {}) {
       return {
         service: { origin, healthy, managed: manageProcess, pid: child?.pid ?? null, reason: ready.reason ?? null },
         login,
-        dryRun,
+        dryRun: effDryRun(),
+        requireApproval: requireApproval(),
+        pendingApprovals: Object.keys(state.approvals || {}).length,
         rules: { path: rulesPath, error: r._error, comment_gate: r.comment_gate, reply_policy: r.reply_policy, reply_style: r.reply_style },
         quota: { dayCount: state.dayCount, hourCount: state.hourCount, ...r.reply_policy },
         sentTotal: Object.keys(state.sent).length,
@@ -402,7 +464,9 @@ function applyInner(ctx, config = {}) {
     },
     output: objOut,
     async execute(args) {
-      const max = getRules().reply_policy.max_per_note ?? 3
+      const rules = getRules()
+      const max = rules.reply_policy.max_per_note ?? 3
+      const banned = rules.reply_style.banned_words ?? []
       const approved = []
       const rejected = []
       const used = new Set()
@@ -413,24 +477,40 @@ function applyInner(ctx, config = {}) {
         if (state.sent[c.commentId]) { rejected.push({ commentId: c.commentId, why: 'already_sent' }); continue }
         if (used.has(c.userId)) { rejected.push({ commentId: c.commentId, why: 'dup_user' }); continue }
         if (approved.length >= max) { rejected.push({ commentId: c.commentId, why: 'max_per_note' }); continue }
-        if (text.length > (getRules().reply_style.max_chars ?? 60)) { rejected.push({ commentId: c.commentId, why: 'too_long' }); continue }
+        if (text.length > (rules.reply_style.max_chars ?? 60)) { rejected.push({ commentId: c.commentId, why: 'too_long' }); continue }
+        const hit = banned.find((w) => w && text.includes(w))
+        if (hit) { rejected.push({ commentId: c.commentId, why: 'banned_word', word: hit }); continue }
         used.add(c.userId)
         approved.push({ feedId: args.feedId, xsecToken: args.xsecToken ?? '', ...c, replyText: text, createdAt: new Date().toISOString(), dryRun: effDryRun() })
       }
       if (approved.length) appendFileSync(draftsPath, approved.map((d) => JSON.stringify(d)).join('\n') + '\n')
-      return { approved: approved.length, rejected, drafts: approved }
+      return {
+        approved: approved.length,
+        rejected,
+        drafts: approved,
+        style: {
+          tone: rules.reply_style.tone ?? '',
+          max_chars: rules.reply_style.max_chars ?? 60,
+          banned_words: banned,
+          example_good: rules.reply_style.example_good ?? [],
+          example_bad: rules.reply_style.example_bad ?? [],
+        },
+      }
     },
   }))
 
   ctx.tools.register(defineTool({
     name: 'xhs_reply',
-    description: '回复指定评论（一级/二级）。dryRun 下只回显；非 dryRun 需 confirm=true 才真正发送。',
+    description:
+      '回复指定评论（一级/二级）。干跑时只回显；非干跑时还需要「人工批准」——'
+      + '票据只能由面板/右侧栏点「发送这条」签发，agent 自己无法批准，会返回 need_human_approval。'
+      + '所以这个工具在关闭干跑后主要用来验证文案，真正发送请让用户去 UI 点。',
     parameters: {
       feedId: { type: 'string', required: true, description: 'feed_id' },
       xsecToken: { type: 'string', required: true, description: 'xsec_token' },
       commentId: { type: 'string', required: true, description: '目标评论 id' },
       text: { type: 'string', required: true, description: '回复文案' },
-      confirm: { type: 'boolean', description: '真正发送的确认位' },
+      confirm: { type: 'boolean', description: '确认位（仍需人工批准票据，单靠它为 true 发不出去）' },
     },
     output: objOut,
     async execute(args) {
@@ -477,6 +557,8 @@ function applyInner(ctx, config = {}) {
           if (!d.text) return { ok: false, blocked: 'empty_text' }
           if (!d.xsecToken) return { ok: false, blocked: 'missing_xsec_token' }
           if (effDryRun()) return { ok: false, blocked: 'dry_run_on' }
+          // 走到这里 = 人在 UI 上点了「发送这条」，签发一次性票据
+          mintApproval(d.commentId, d.text)
           return doSend({ feedId: d.feedId, xsecToken: d.xsecToken, commentId: d.commentId, text: d.text })
         },
         skip: async (commentId) => {
