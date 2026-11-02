@@ -15,6 +15,7 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } fr
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { startPanel } from './panel.js'
+import { createRunner } from './run.js'
 
 // 不 import 任何 @deepseek-ai/* ：本插件通过 profile 补丁以「绝对路径」加载，
 // 那种加载方式下裸导入会从插件目录向上找 node_modules，必然解析失败。
@@ -524,6 +525,45 @@ function applyInner(ctx, config = {}) {
     },
   }))
 
+  // --------------------------------------------------------------- runner
+
+  const onDraft = (d) => {
+    appendFileSync(draftsPath, JSON.stringify(d) + '\n')
+  }
+
+  const llmBridge = {
+    stream: (opts) => {
+      const llm = ctx.get && ctx.get('llm')
+      if (!llm || typeof llm.stream !== 'function') throw new Error('宿主没有可用的 llm 服务')
+      return llm.stream(opts)
+    },
+  }
+
+  const runner = createRunner({
+    api,
+    getRules,
+    llm: llmBridge,
+    llmConfig: () => ({ provider: config.llmProvider, model: config.llmModel }),
+    onDraft,
+    send: (a) => doSend(a),
+    log,
+    state,
+    persist,
+    requireApproval,
+  })
+
+  let running = false
+  const startRun = (body) => {
+    if (running) return { ok: false, busy: true }
+    running = true
+    const p = runner.run(body ?? {})
+    p.catch((e) => {
+      state.job = { ...(state.job ?? {}), phase: 'error', errors: [String(e?.message ?? e)] }
+      persist()
+    }).finally(() => { running = false })
+    return { ok: true, started: true }
+  }
+
   // --------------------------------------------------------------- panel
 
   const panel = (() => {
@@ -546,11 +586,14 @@ function applyInner(ctx, config = {}) {
             reason: ready.reason ?? null,
             login,
             dryRun: effDryRun(),
+            requireApproval: requireApproval(),
+            job: state.job ?? null,
             quota: { dayCount: state.dayCount, hourCount: state.hourCount, ...r.reply_policy },
             sentTotal: Object.keys(state.sent).length,
             hardStopped: hardStopped(),
           }
         },
+        run: async (body) => startRun(body),
         approve: async (d) => {
           const block = guard(String(d.commentId))
           if (block) return { ok: false, blocked: block }

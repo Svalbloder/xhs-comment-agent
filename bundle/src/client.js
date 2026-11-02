@@ -57,6 +57,18 @@
   function makePanel(React) {
     const h = React.createElement
     const { useCallback, useEffect, useState } = React
+  const PHASE = { searching: '搜索中', collecting: '抓评论', sending: '发送中', done: '完成', error: '出错' }
+  function jobLine(job) {
+    if (!job) return '还没跑过'
+    const p = String(job.phase || '')
+    const seg = p.split(':')
+    const head = seg.length > 1 ? ((PHASE[seg[0]] || seg[0]) + ' ' + seg[1].slice(0, 14)) : (PHASE[p] || p)
+    const parts = [head]
+    if (job.drafted != null) parts.push('草稿 ' + job.drafted)
+    if (job.sent != null) parts.push('发送 ' + job.sent)
+    if (job.errors && job.errors.length) parts.push('错误 ' + job.errors.length)
+    return parts.join(' · ')
+  }
 
     return function XhsPanel() {
       const [state, setState] = useState(null)
@@ -64,12 +76,15 @@
       const [form, setForm] = useState(null)
       const [msg, setMsg] = useState('')
       const [busy, setBusy] = useState(false)
+      const [running, setRunning] = useState(false)
 
       const load = useCallback(async () => {
         const s = await api('/api/state')
         if (!s || !s.status) return
         setState(s)
         setForm((prev) => prev ?? {
+          keywords: (s.rules.keywords || []).join('\n'),
+          require_approval: s.status.requireApproval !== false,
           must_any: ((s.rules.comment_gate || {}).must_any || []).join('\n'),
           must_not: ((s.rules.comment_gate || {}).must_not || []).join('\n'),
           max_len: (s.rules.comment_gate || {}).max_len ?? 120,
@@ -93,6 +108,8 @@
           method: 'POST',
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({
+            keywords: lines(form.keywords),
+            require_approval: !!form.require_approval,
             comment_gate: { level: [1, 2], must_any: lines(form.must_any), must_not: lines(form.must_not), max_len: +form.max_len || 120 },
             reply_policy: { max_per_note: +form.max_per_note || 2, hourly_quota: +form.hourly_quota || 5, daily_quota: +form.daily_quota || 20, min_interval_sec: +form.min_interval_sec || 45 },
             reply_style: { max_chars: +form.max_chars || 60, banned_words: lines(form.banned_words) },
@@ -102,6 +119,40 @@
         setBusy(false)
         setMsg(r && r.ok ? '规则已保存' : '保存失败：' + (r && r.error ? r.error : ''))
         setTimeout(() => setMsg(''), 2500)
+      }
+
+      const runNow = async (mode) => {
+        setRunning(true)
+        setMsg(mode === 'test' ? '测试：只搜索帖子，不抓评论…' : '开始：搜索 → 抓评论 → 生成回复')
+        const r = await api('/api/run', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ mode }),
+        })
+        if (!r || !r.ok) {
+          setRunning(false)
+          setMsg(r && r.busy ? '上一轮还在跑，等它结束' : ('启动失败：' + ((r && r.error) || '')))
+          setTimeout(() => setMsg(''), 3000)
+          return
+        }
+        // 轮询任务状态
+        const timer = setInterval(async () => {
+          const s = await api('/api/state')
+          if (!s || !s.status) return
+          setState(s)
+          const job = s.status.job
+          if (!job || job.phase === 'done' || job.phase === 'error') {
+            clearInterval(timer)
+            setRunning(false)
+            const errs = (job && job.errors) || []
+            setMsg(job && job.phase === 'error'
+              ? ('执行出错：' + errs.join('；'))
+              : (mode === 'test'
+                ? ('测试完成：命中 ' + ((job && job.notesTotal) || 0) + ' 篇笔记')
+                : ('完成：草稿 ' + ((job && job.drafted) || 0) + ' 条，发送 ' + ((job && job.sent) || 0) + ' 条' + (errs.length ? '，错误 ' + errs.length + ' 条' : ''))))
+            setTimeout(() => setMsg(''), 6000)
+          }
+        }, 3000)
       }
 
       const send = async (d, text) => {
@@ -158,13 +209,26 @@
         ),
         msg ? h('div', { className: 'xhs-warn' }, msg) : null,
 
+        // 执行区：开始 = 完整跑一轮；测试 = 只搜帖子看看命中
+        h('div', { className: 'xhs-row' },
+          h('button', { className: 'xhs-btn primary', disabled: running, onClick: () => runNow('start') }, running ? '执行中…' : '开始'),
+          h('button', { className: 'xhs-btn', disabled: running, onClick: () => runNow('test') }, '测试'),
+          h('span', { className: 'xhs-mut' }, jobLine(st.job)),
+        ),
+
         h('div', { className: 'xhs-tabs' },
-          h('div', { className: 'xhs-tab ' + (tab === 'drafts' ? 'on' : ''), onClick: () => setTab('drafts') }, '待审草稿 (' + drafts.length + ')'),
+          h('div', { className: 'xhs-tab ' + (tab === 'drafts' ? 'on' : ''), onClick: () => setTab('drafts') },
+            (st.requireApproval === false ? '回复记录' : '回复清单') + ' (' + drafts.length + ')'),
           h('div', { className: 'xhs-tab ' + (tab === 'rules' ? 'on' : ''), onClick: () => setTab('rules') }, '规则'),
           h('div', { className: 'xhs-tab ' + (tab === 'import' ? 'on' : ''), onClick: () => setTab('import') }, '导入清单'),
         ),
 
         tab === 'rules' ? h('div', { className: 'xhs-card' },
+          h('label', { className: 'xhs-label' }, '搜索语句 / 关键词（每行一个，最多用前 3 个）'),
+          h('textarea', { className: 'xhs-area', value: form.keywords, onChange: (e) => setForm({ ...form, keywords: e.target.value }), placeholder: '上海 露营 免费营地\n明火 营地' }),
+          h('label', { className: 'xhs-row', style: { marginTop: 10 } },
+            h('input', { type: 'checkbox', checked: !!form.require_approval, onChange: (e) => setForm({ ...form, require_approval: e.target.checked }) }),
+            h('span', null, '审核模式：生成的回复先进清单，我点「发送这条」才发')),
           h('label', { className: 'xhs-label' }, '评论必须包含其一（每行一个，空 = 不筛）'),
           h('textarea', { className: 'xhs-area', value: form.must_any, onChange: (e) => setForm({ ...form, must_any: e.target.value }) }),
           h('label', { className: 'xhs-label' }, '评论不能包含（黑名单）'),
@@ -203,14 +267,14 @@
         ) : null,
 
         tab === 'drafts' ? (drafts.length
-          ? drafts.map((d, i) => h(DraftItem, { key: d.commentId + i, d, busy, onSend: send, onSkip: skip }))
+          ? drafts.map((d, i) => h(DraftItem, { key: d.commentId + i, d, busy, canApprove: st.requireApproval !== false, onSend: send, onSkip: skip }))
           : h('div', { className: 'xhs-card xhs-mut' }, '还没有草稿。在对话里说「搜露营，把候选做成草稿」，抓完评论就会出现在这里。')
         ) : null,
       )
     }
 
     function DraftItem(props) {
-      const { d, busy, onSend, onSkip } = props
+      const { d, busy, canApprove, onSend, onSkip } = props
       const [text, setText] = useState(d.replyText || '')
       return h('div', { className: 'xhs-card' },
         h('div', { className: 'xhs-row' },
@@ -221,8 +285,10 @@
         h('div', { className: 'xhs-quote' }, d.content || ''),
         h('textarea', { className: 'xhs-area', value: text, onChange: (e) => setText(e.target.value) }),
         h('div', { className: 'xhs-row', style: { marginTop: 6 } },
-          h('button', { className: 'xhs-btn primary', disabled: busy || d.sent, onClick: () => onSend(d, text) }, '发送这条'),
-          h('button', { className: 'xhs-btn', disabled: busy, onClick: () => onSkip(d) }, '跳过'),
+          canApprove
+            ? h('button', { className: 'xhs-btn primary', disabled: busy || d.sent, onClick: () => onSend(d, text) }, '发送这条')
+            : h('span', { className: 'xhs-mut' }, d.sent ? '已自动发送' : '自动模式：无需审核'),
+          canApprove ? h('button', { className: 'xhs-btn', disabled: busy, onClick: () => onSkip(d) }, '跳过') : null,
         ),
       )
     }

@@ -23,6 +23,7 @@ export function startPanel(opts) {
     statePath,
     draftsPath,
     getStatus,
+    run,
     approve,
     skip,
   } = opts
@@ -36,6 +37,7 @@ export function startPanel(opts) {
       if (!existsSync(draftsPath)) return []
       const lines = readFileSync(draftsPath, 'utf8').split('\n').filter(Boolean)
       const state = readJson(statePath, { sent: {}, skipped: [] })
+      const skipped = new Set((state.skipped ?? []).map((s) => s.commentId))
       const seen = new Set()
       const out = []
       for (const line of lines.slice().reverse()) {
@@ -43,6 +45,7 @@ export function startPanel(opts) {
         try { d = JSON.parse(line) } catch { continue }
         if (!d?.commentId || seen.has(d.commentId)) continue
         seen.add(d.commentId)
+        if (skipped.has(d.commentId)) continue
         out.push({ ...d, sent: !!state.sent?.[d.commentId] })
         if (out.length >= 50) break
       }
@@ -110,6 +113,13 @@ export function startPanel(opts) {
         })
       }
 
+      // 「开始 / 测试」：立刻返回，任务在后台跑，前端轮询 /api/state 里的 job
+      if (req.method === 'POST' && url.pathname === '/api/run') {
+        const body = await readBody(req)
+        const r = await run(body ?? {})
+        return json(res, r?.busy ? 409 : 202, r ?? { ok: true })
+      }
+
       if (req.method === 'POST' && url.pathname === '/api/rules') {
         const body = await readBody(req)
         const cur = readJson(rulesPath, {})
@@ -121,6 +131,7 @@ export function startPanel(opts) {
           reply_policy: { ...(cur.reply_policy ?? {}), ...(body.reply_policy ?? {}) },
           reply_style: { ...(cur.reply_style ?? {}), ...(body.reply_style ?? {}) },
           dry_run: body.dry_run,
+          require_approval: typeof body.require_approval === 'boolean' ? body.require_approval : cur.require_approval,
         }
         writeFileSync(rulesPath, JSON.stringify(next, null, 2))
         return json(res, 200, { ok: true, rules: next })
