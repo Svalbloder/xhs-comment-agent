@@ -1,0 +1,46 @@
+name: release
+
+# 打 tag（v*）时自动构建部署包并挂到 Release，客户点一下就能下。
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  pack:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 组装部署包
+        shell: pwsh
+        run: |
+          $stage = "pkg/xhs-comment-agent"
+          New-Item -ItemType Directory -Force "$stage/deploy" | Out-Null
+          New-Item -ItemType Directory -Force "$stage/bundle/src" | Out-Null
+          New-Item -ItemType Directory -Force "$stage/交付物" | Out-Null
+          Copy-Item "deploy/*" "$stage/deploy" -Recurse -Force
+          Copy-Item "bundle/src/*" "$stage/bundle/src" -Recurse -Force
+          Copy-Item "examples/*" "$stage/交付物" -Recurse -Force
+          $name = "xhs-comment-agent-${{ github.ref_name }}.zip"
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          [System.IO.Compression.ZipFile]::CreateFromDirectory(
+            (Resolve-Path "pkg/xhs-comment-agent").Path,
+            (Join-Path (Get-Location) $name),
+            [System.IO.Compression.CompressionLevel]::Optimal,
+            $true,
+            [System.Text.UTF8Encoding]::new($false))
+          Get-Item $name | Select-Object Name, Length
+
+      - name: 创建 Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $tag = "${{ github.ref_name }}"
+          $zip = "xhs-comment-agent-$tag.zip"
+          gh release create $tag $zip --generate-notes --title "小红书评论 Agent $tag"

@@ -1,0 +1,257 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>小红书评论 Agent 控制台</title>
+<style>
+  :root{--bg:#0f1115;--card:#171a21;--line:#262b36;--fg:#e6e8ee;--mut:#8b93a7;--acc:#ff2e4d;--ok:#2fbf71;--warn:#e6a23c}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.6 -apple-system,"Segoe UI",system-ui,sans-serif}
+  .wrap{max-width:1040px;margin:0 auto;padding:24px 20px 64px}
+  h1{font-size:18px;margin:0 0 4px}
+  .sub{color:var(--mut);font-size:12px;margin-bottom:18px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px;margin-bottom:16px}
+  .row{display:flex;gap:12px;flex-wrap:wrap}
+  .col{flex:1;min-width:240px}
+  label{display:block;font-size:12px;color:var(--mut);margin:10px 0 4px}
+  input,textarea,select{width:100%;background:#0d1015;border:1px solid var(--line);color:var(--fg);border-radius:8px;padding:8px 10px;font:inherit}
+  textarea{min-height:64px;resize:vertical}
+  button{background:var(--acc);color:#fff;border:0;border-radius:8px;padding:8px 14px;font:inherit;cursor:pointer}
+  button.ghost{background:#232833;color:var(--fg)}
+  button.small{padding:4px 10px;font-size:12px}
+  button:disabled{opacity:.45;cursor:not-allowed}
+  .pill{display:inline-block;padding:2px 8px;border-radius:999px;background:#232833;color:var(--mut);font-size:12px;margin:0 6px 6px 0}
+  .pill.ok{background:rgba(47,191,113,.15);color:var(--ok)}
+  .pill.bad{background:rgba(255,46,77,.15);color:var(--acc)}
+  .draft{border-top:1px solid var(--line);padding:12px 0}
+  .draft:first-child{border-top:0}
+  .meta{color:var(--mut);font-size:12px}
+  .quote{color:#c8cede;background:#0d1015;border-left:2px solid var(--line);padding:6px 10px;margin:6px 0;border-radius:4px;white-space:pre-wrap}
+  .flex{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+  .sp{flex:1}
+  .toast{position:fixed;right:20px;bottom:20px;background:#232833;border:1px solid var(--line);padding:10px 14px;border-radius:8px;opacity:0;transition:.2s}
+  .toast.show{opacity:1}
+  .hint{color:var(--mut);font-size:12px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>小红书评论 Agent</h1>
+  <div class="sub">本地控制台 · 规则改动即时生效 · 发送需要你点「发送」</div>
+
+  <div class="card">
+    <div class="flex" id="status"><span class="pill">加载中…</span></div>
+  </div>
+
+  <div class="card">
+    <div class="flex">
+      <strong>导入客户配置清单</strong>
+      <span class="hint">客户填好的 .xlsx</span>
+      <div class="sp"></div>
+      <input id="xlsx" type="file" accept=".xlsx" style="width:auto">
+      <button class="ghost" onclick="importSheet(false)">解析预览</button>
+    </div>
+    <div id="importResult" style="margin-top:12px"></div>
+  </div>
+
+  <div class="card">
+    <div class="row">
+      <div class="col">
+        <label>关注的关键词（逗号分隔，仅作记录/搜索参考）</label>
+        <input id="keywords" placeholder="露营, 徒步帐篷">
+        <label>评论必须包含任一（每行一个；留空 = 不筛）</label>
+        <textarea id="must_any" placeholder="多少钱&#10;求链接&#10;怎么选"></textarea>
+        <label>评论必须不含（每行一个，黑名单）</label>
+        <textarea id="must_not" placeholder="加微&#10;私信&#10;代购"></textarea>
+      </div>
+      <div class="col">
+        <label>评论最大字数</label>
+        <input id="max_len" type="number" min="1" max="1000">
+        <label>单篇笔记最多回几条</label>
+        <input id="max_per_note" type="number" min="1" max="20">
+        <div class="row">
+          <div class="col"><label>每小时上限</label><input id="hourly_quota" type="number" min="1" max="60"></div>
+          <div class="col"><label>每天上限</label><input id="daily_quota" type="number" min="1" max="200"></div>
+        </div>
+        <div class="row">
+          <div class="col"><label>最小间隔（秒）</label><input id="min_interval_sec" type="number" min="5" max="600"></div>
+          <div class="col"><label>回复最大字数</label><input id="max_chars" type="number" min="10" max="300"></div>
+        </div>
+        <label class="flex" style="margin-top:12px">
+          <input id="dryRun" type="checkbox" style="width:auto"> <span style="color:var(--fg)">干跑：只存草稿，不真发</span>
+        </label>
+      </div>
+    </div>
+    <div class="flex" style="margin-top:14px">
+      <button onclick="saveRules()">保存规则</button>
+      <button class="ghost" onclick="load()">重新载入</button>
+      <div class="sp"></div>
+      <span class="hint" id="rulesPath"></span>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="flex">
+      <strong>待审草稿</strong>
+      <span class="hint" id="draftCount"></span>
+      <div class="sp"></div>
+      <button class="ghost small" onclick="load()">刷新</button>
+    </div>
+    <div id="drafts"></div>
+  </div>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+let S = null
+const $ = (id) => document.getElementById(id)
+const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))
+function toast(msg){ const t=$('toast'); t.textContent=msg; t.classList.add('show'); setTimeout(function(){t.classList.remove('show')},1800) }
+
+async function load(){
+  const r = await fetch('/api/state'); S = await r.json()
+  const st = S.status
+  const logged = st.login && st.login.is_logged_in
+  $('status').innerHTML =
+    '<span class="pill '+(st.healthy?'ok':'bad')+'">服务 '+(st.healthy?'在线':'离线')+'</span>' +
+    '<span class="pill '+(logged?'ok':'bad')+'">'+(logged?('已登录 · '+esc(st.login.username||'')):'未登录')+'</span>' +
+    '<span class="pill">今日 '+st.quota.dayCount+'/'+st.quota.daily_quota+'</span>' +
+    '<span class="pill">本小时 '+st.quota.hourCount+'/'+st.quota.hourly_quota+'</span>' +
+    '<span class="pill">已发送 '+st.sentTotal+'</span>' +
+    (st.hardStopped?'<span class="pill bad">已熔断</span>':'')
+  const r0 = S.rules || {}
+  const cg = r0.comment_gate || {}
+  const rp = r0.reply_policy || {}
+  const rs = r0.reply_style || {}
+  $('keywords').value = (r0.keywords||[]).join(', ')
+  $('must_any').value = (cg.must_any||[]).join('\n')
+  $('must_not').value = (cg.must_not||[]).join('\n')
+  $('max_len').value = cg.max_len != null ? cg.max_len : 120
+  $('max_per_note').value = rp.max_per_note != null ? rp.max_per_note : 2
+  $('hourly_quota').value = rp.hourly_quota != null ? rp.hourly_quota : 5
+  $('daily_quota').value = rp.daily_quota != null ? rp.daily_quota : 20
+  $('min_interval_sec').value = rp.min_interval_sec != null ? rp.min_interval_sec : 45
+  $('max_chars').value = rs.max_chars != null ? rs.max_chars : 60
+  $('dryRun').checked = !!st.dryRun
+  $('rulesPath').textContent = S.rulesPath || ''
+  renderDrafts(S.drafts || [])
+}
+
+function lines(id){ return $(id).value.split('\n').map(function(s){return s.trim()}).filter(Boolean) }
+
+async function saveRules(){
+  const body = {
+    keywords: $('keywords').value.split(',').map(function(s){return s.trim()}).filter(Boolean),
+    comment_gate: { level:[1,2], must_any: lines('must_any'), must_not: lines('must_not'), max_len: +$('max_len').value || 120 },
+    reply_policy: { max_per_note:+$('max_per_note').value||2, hourly_quota:+$('hourly_quota').value||5, daily_quota:+$('daily_quota').value||20, min_interval_sec:+$('min_interval_sec').value||45 },
+    reply_style: { max_chars:+$('max_chars').value||60 },
+    dry_run: $('dryRun').checked
+  }
+  const r = await fetch('/api/rules', {method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify(body)})
+  const j = await r.json()
+  toast(j.ok ? '已保存，下一轮采集立即生效' : ('保存失败：'+(j.error||'')))
+  load()
+}
+
+function renderDrafts(list){
+  $('draftCount').textContent = list.length ? ('共 '+list.length+' 条') : ''
+  if(!list.length){
+    $('drafts').innerHTML = '<div class="hint" style="padding:12px 0">还没有草稿。在对话里说「搜露营，把候选做成草稿」，抓完评论就会出现在这里。</div>'
+    return
+  }
+  let html = ''
+  for(let i=0;i<list.length;i++){
+    const d = list[i]
+    html += '<div class="draft" data-i="'+i+'">' +
+      '<div class="meta"><span class="pill">'+(d.level===2?'二级回复':'一级评论')+'</span>' +
+      (d.sent?'<span class="pill bad">已发送</span>':'') +
+      esc(d.user||'')+' · 赞 '+(d.liked||0)+' · '+esc(String(d.createdAt||'').slice(0,19))+'</div>' +
+      '<div class="quote">'+esc(d.content||'')+'</div>' +
+      '<textarea id="t'+i+'" style="min-height:52px">'+esc(d.replyText||'')+'</textarea>' +
+      '<div class="flex" style="margin-top:8px">' +
+        '<button class="small" onclick="send('+i+')"'+(d.sent?' disabled':'')+'>发送这条</button>' +
+        '<button class="ghost small" onclick="skip('+i+')">跳过</button>' +
+        '<span class="hint" id="m'+i+'"></span>' +
+      '</div></div>'
+  }
+  $('drafts').innerHTML = html
+}
+
+async function send(i){
+  const d = S.drafts[i]
+  const text = $('t'+i).value.trim()
+  if(!text){ toast('文案不能为空'); return }
+  if(!confirm('确认发送到这条评论？\n\n'+String(d.content).slice(0,60)+'\n\n回复：'+text)) return
+  $('m'+i).textContent = '发送中…'
+  const r = await fetch('/api/reply', {method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({commentId:d.commentId, feedId:d.feedId, xsecToken:d.xsecToken, text:text})})
+  const j = await r.json()
+  $('m'+i).textContent = j.ok ? '已发送' : ('失败：'+(j.blocked||j.error||j.reason||''))
+  if(j.ok) setTimeout(load, 800)
+}
+
+async function skip(i){
+  const d = S.drafts[i]
+  await fetch('/api/skip', {method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({commentId:d.commentId})})
+  load()
+}
+
+/* ---------- 导入 Excel ---------- */
+let importBuf = null
+
+async function importSheet(apply){
+  const f = $('xlsx').files && $('xlsx').files[0]
+  if(!f){ toast('先选一个 .xlsx 文件'); return }
+  if(!importBuf || importBuf.__name !== f.name + f.size){
+    importBuf = await f.arrayBuffer()
+  }
+  const r = await fetch('/api/import' + (apply ? '?apply=1' : ''), {
+    method:'POST',
+    headers:{'content-type':'application/octet-stream'},
+    body: importBuf
+  })
+  const j = await r.json()
+  if(!j.ok){ $('importResult').innerHTML = '<span class="pill bad">解析失败</span> ' + esc(j.error||''); return }
+  renderImport(j, apply)
+  if(apply){ toast('已应用客户配置'); load() }
+}
+
+function renderImport(j, applied){
+  const r = j.rules
+  const cg = r.comment_gate || {}, rp = r.reply_policy || {}, rs = r.reply_style || {}
+  const rows = [
+    ['客户', r.account_label || '（未填）'],
+    ['关键词', (r.keywords||[]).join('、') || '（未填）'],
+    ['回复范围', r.scope === 'own' ? '自己的笔记' : (r.scope === 'both' ? '两者都要' : '别人的笔记')],
+    ['干跑', r.dry_run ? '是（不会真发）' : '否（会真发）'],
+    ['回复层级', (cg.level||[]).join('、')],
+    ['评论须含', (cg.must_any||[]).join('、') || '（不筛）'],
+    ['黑名单', (cg.must_not||[]).join('、') || '（无）'],
+    ['配额', '每小时 ' + rp.hourly_quota + ' · 每天 ' + rp.daily_quota + ' · 单篇 ' + rp.max_per_note],
+    ['间隔', rp.min_interval_sec + ' 秒'],
+    ['语气', rs.tone || '（未填）'],
+    ['回复字数', rs.max_chars],
+    ['禁用词', (rs.banned_words||[]).join('、') || '（无）']
+  ]
+  let html = '<div class="hint" style="margin-bottom:8px">读到 ' + j.filled + ' 个字段</div>'
+  html += '<table style="width:100%;border-collapse:collapse;font-size:13px">'
+  for(const [k,v] of rows){
+    html += '<tr><td style="padding:5px 8px;color:#8b93a7;width:110px;border-bottom:1px solid #262b36">'+esc(k)+'</td>' +
+            '<td style="padding:5px 8px;border-bottom:1px solid #262b36">'+esc(v)+'</td></tr>'
+  }
+  html += '</table>'
+  if(j.missing && j.missing.length){
+    html += '<div style="margin-top:10px"><span class="pill bad">缺必填</span>' + j.missing.map(esc).join('、') + '</div>'
+  }
+  if(j.warnings && j.warnings.length){
+    html += '<div style="margin-top:8px">' + j.warnings.map(function(w){ return '<span class="pill">'+esc(w)+'</span>' }).join('') + '</div>'
+  }
+  html += '<div class="flex" style="margin-top:12px">' +
+    (applied ? '<span class="pill ok">已写入规则</span>' : '<button onclick="importSheet(true)">应用到系统</button>') +
+    '</div>'
+  $('importResult').innerHTML = html
+}
+
+load(); setInterval(load, 15000)
+</script>
+</body></html>

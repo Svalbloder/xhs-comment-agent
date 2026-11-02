@@ -1,0 +1,16 @@
+# 忽略规则
+node_modules/
+*.log
+*.bak
+*.bak-*
+cookies.json
+state.json
+drafts.jsonl
+rules.local.json
+agent.log
+boot.log
+acl-recovery/
+runtimes/
+*.exe
+.DS_Store
+Thumbs.db
