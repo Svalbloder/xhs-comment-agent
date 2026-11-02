@@ -22,9 +22,13 @@ jobs:
           $stage = "pkg/xhs-comment-agent"
           New-Item -ItemType Directory -Force "$stage/deploy" | Out-Null
           New-Item -ItemType Directory -Force "$stage/bundle/src" | Out-Null
+          New-Item -ItemType Directory -Force "$stage/docs" | Out-Null
           New-Item -ItemType Directory -Force "$stage/交付物" | Out-Null
           Copy-Item "deploy/*" "$stage/deploy" -Recurse -Force
           Copy-Item "bundle/src/*" "$stage/bundle/src" -Recurse -Force
+          # 安装器要求 bundle/package.json 存在（客户端半侧靠 dsh.client 被发现），必须一起打包
+          Copy-Item "bundle/package.json" "$stage/bundle/package.json" -Force
+          Copy-Item "docs/*" "$stage/docs" -Recurse -Force
           Copy-Item "examples/*" "$stage/交付物" -Recurse -Force
           $name = "xhs-comment-agent-${{ github.ref_name }}.zip"
           Add-Type -AssemblyName System.IO.Compression.FileSystem
