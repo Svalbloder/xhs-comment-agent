@@ -1,0 +1,25 @@
+{
+  "name": "dsh-xhs-comment-agent",
+  "version": "0.3.0",
+  "private": true,
+  "type": "module",
+  "description": "DSH plugin: keyword search on Xiaohongshu, rule-filtered level-1/level-2 replies, human-approved sending, in-client sidebar panel.",
+  "main": "./src/index.js",
+  "exports": {
+    ".": "./src/index.js",
+    "./client": "./src/client.js",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web"
+    }
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

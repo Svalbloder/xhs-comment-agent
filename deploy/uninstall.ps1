@@ -50,7 +50,9 @@ foreach ($f in $patched) {
   if ($Preview) { Say "Preview：将从 $f 摘掉插件行" Yellow }
   else {
     Copy-Item $f "$f.bak-$(Get-Date -Format 'yyyyMMdd-HHmmss')" -Force
-    Set-Content $f $text -Encoding utf8
+    # 必须无 BOM：DSH 用 JSON.parse / YAML 解析读这些文件，BOM 会让宿主启动崩溃
+    $enc = New-Object System.Text.UTF8Encoding($false)
+    [System.IO.File]::WriteAllText($f, $text, $enc)
     Say "已清理：$f" Green
   }
 }

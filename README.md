@@ -1,7 +1,9 @@
 # 小红书评论 Agent（DeepSeek Harness 插件）
 
 按关键词找笔记 → 抓一级/二级评论 → 按规则筛选 → 生成回复草稿 → **人工点一下才发**。
-带本地控制台和「客户配置清单」Excel 导入，适合交付给非技术同学使用。
+
+UI 就在 DSH 里：**右侧栏「小红书评论」标签页**（待审草稿 / 规则 / 导入清单），
+另有一个本地面板 `http://127.0.0.1:18765/` 作为兜底与 API。
 
 > 不是爬虫框架，也不是群控工具：默认干跑、有配额、有去重、有熔断，发送必须经过人。
 
@@ -21,17 +23,17 @@
 
 ## 快速开始
 
-### 方式一：下载部署包（推荐给实施同学）
+### 方式一：下载部署包（推荐）
 
-1. 到 [Releases](../../releases) 下载 `xhs-comment-agent-<version>.zip`
-2. 解压，在**管理员 PowerShell** 里执行：
+1. 到 [Releases](../../releases) 下载 `xhs-comment-agent-v*.zip`
+2. 解压，在**管理员 PowerShell** 里：
 
 ```powershell
 cd <解压目录>\xhs-comment-agent
 powershell -NoProfile -ExecutionPolicy Bypass -File .\deploy\install.ps1
 ```
 
-3. 首次扫码登录（只一次）：
+3. 首次扫码登录（只一次，必须在该目录下运行）：
 
 ```powershell
 cd "$env:USERPROFILE\.dsh\xhs-agent"
@@ -39,26 +41,26 @@ cd "$env:USERPROFILE\.dsh\xhs-agent"
 ```
 
 4. 托盘退出 DSH 再打开
-5. 浏览器打开 <http://127.0.0.1:18765/>
+5. 右侧栏出现「小红书评论」标签
 
 完整步骤与排错见 [deploy/部署说明.md](deploy/部署说明.md)。
 
 ### 方式二：从源码装
 
 ```powershell
-git clone <this-repo>
-cd <repo>
+git clone <this-repo>; cd <repo>
 powershell -NoProfile -ExecutionPolicy Bypass -File .\deploy\install.ps1 -SkipDownload
 ```
 
-安装器会把 `bundle/src` 复制到 `%USERPROFILE%\.dsh\plugins\xhs-comment-agent`，并在 DSH profile 的
-`cordis.patch.yml` 里登记一行（幂等，重复执行只覆盖同一行，写前自动备份）。
+安装器是**幂等**的：重复执行只覆盖同一行配置，写前备份、写后校验、
+失败自动回滚；所有文本文件都以 **UTF-8 无 BOM** 写入（BOM 会让 DSH 宿主启动崩溃，
+见 [docs/INCIDENT-2026-11-03-bom-crash.md](docs/INCIDENT-2026-11-03-bom-crash.md)）。
 
 ---
 
 ## 装了之后有什么
 
-### 对话里的 6 个工具
+### DSH 对话里的 6 个工具
 
 | 工具 | 作用 |
 |---|---|
@@ -69,17 +71,17 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\deploy\install.ps1 -SkipDo
 | `xhs_plan` | 把候选 + 文案写成草稿（不发送） |
 | `xhs_reply` | 回复指定评论；干跑只回显，真发需 `confirm` |
 
-### 本地控制台 `http://127.0.0.1:18765/`
+### 右侧栏面板
 
-- 状态条：服务在线、登录账号、今日/本小时配额、已发送数、是否熔断
-- 规则表单：关键词、必含词、黑名单、字数、单篇/小时/天上限、最小间隔、干跑开关
-- **导入客户配置清单（.xlsx）**：解析预览 → 应用到系统 → 立即生效
-- 待审草稿：评论原文 + 可改的回复 + 「发送这条」/「跳过」
+- 状态条：服务在线、登录账号、今日/本小时配额、是否熔断
+- **待审草稿**：评论原文 + 可改的回复 + 「发送这条」/「跳过」
+- **规则**：必含词、黑名单、字数、单篇/小时/天上限、最小间隔、干跑开关（保存即生效）
+- **导入清单**：选 `.xlsx` → 解析预览 → 立即生效
 
 ### 客户配置清单
 
 [examples/客户配置清单-模板.xlsx](examples/客户配置清单-模板.xlsx)：5 张表 + 填写说明，
-客户只填 B 列，关键项有下拉框。填好直接拖进面板即可。
+客户只填 B 列，关键项带下拉框。填好拖进面板的「导入清单」即可。
 
 ---
 
@@ -104,19 +106,21 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\deploy\install.ps1 -SkipDo
 ## 目录结构
 
 ```
-bundle/src/        插件源码（零运行时依赖）
-  index.js         宿主插件：工具注册、sidecar 托管、配额/去重/熔断
-  panel.js/.html   本地控制台
-  xlsx.js          零依赖 xlsx 读取（ZIP + sharedStrings + sheet）
-  mapping.js       Excel → rules.json 映射
-deploy/            安装器 / 卸载器 / 部署说明
-examples/          客户配置清单模板与示例
+bundle/src/            插件源码（零运行时依赖）
+  index.js             宿主半侧：工具注册、sidecar 托管、配额/去重/熔断
+  client.js            客户端半侧：右侧栏标签页（手写 ESM，无打包）
+  panel.js/.html       本地面板（兜底 UI + HTTP API）
+  xlsx.js              零依赖 xlsx 读取（ZIP + sharedStrings + sheet）
+  mapping.js           Excel → rules.json 映射
+deploy/                安装器 / 卸载器 / 急救脚本 / 部署说明
+docs/                  事故记录
+examples/              客户配置清单模板与示例
 ```
 
 ## 依赖
 
 - Windows 10/11 x64，DeepSeek Harness 桌面端（至少启动过一次）
-- [xiaohongshu-mcp](https://github.com/xpzouying/xiaohongshu-mcp) 的预编译二进制（安装器自动下载，Apache-2.0）
+- [xiaohongshu-mcp](https://github.com/xpzouying/xiaohongshu-mcp) 预编译二进制（安装器自动下载，Apache-2.0）
 - 不需要 Node / Python / Docker —— 插件跑在 DSH 宿主进程里
 
 ## License

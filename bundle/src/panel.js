@@ -50,8 +50,17 @@ export function startPanel(opts) {
     } catch { return [] }
   }
 
+  // 面板会被 DSH 客户端（另一个 origin）调用，必须放行跨域。
+  // 只监听回环地址，这里放开 * 不额外扩大暴露面。
+  const CORS = {
+    'access-control-allow-origin': '*',
+    'access-control-allow-methods': 'GET,POST,OPTIONS',
+    'access-control-allow-headers': 'content-type',
+    'access-control-max-age': '600',
+  }
+
   const json = (res, code, obj) => {
-    res.writeHead(code, { 'content-type': 'application/json; charset=utf-8' })
+    res.writeHead(code, { 'content-type': 'application/json; charset=utf-8', ...CORS })
     res.end(JSON.stringify(obj))
   }
 
@@ -78,6 +87,13 @@ export function startPanel(opts) {
   const server = createServer(async (req, res) => {
     try {
       const url = new URL(req.url, `http://${host}:${port}`)
+
+      // 预检请求（客户端跨域发 JSON / 二进制时会有）
+      if (req.method === 'OPTIONS') {
+        res.writeHead(204, CORS)
+        res.end()
+        return
+      }
 
       if (req.method === 'GET' && (url.pathname === '/' || url.pathname === '/index.html')) {
         res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
