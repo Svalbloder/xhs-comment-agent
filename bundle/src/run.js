@@ -1,12 +1,53 @@
 /**
- * 「开始」按钮的执行器：搜索 → 抓评论 → 生成回复 → 入清单（或直接发）。
+ * 执行器：搜索 → 抓评论 → 生成回复 → 入清单。
  *
- * 拆成独立模块，避免 index.js 继续膨胀。依赖全部由调用方注入。
+ * 两种模式：
+ *   once —— 跑一轮就停（「跑一轮」按钮，用于验收规则）
+ *   loop —— 一轮接一轮，直到被终止（「开始」按钮）
+ *
+ * 暂停 / 继续 / 终止由注入的 control 在每次外部调用前检查；
+ * control.checkpoint() 会在暂停时挂起、终止时抛 STOP。
+ *
+ * token 用量来自 llm 流里的 { type:'usage' } chunk，是真实值，不做估算。
  */
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
+export const STOP = Symbol('xhs-stop')
+
 export function createRunner(deps) {
-  const { api, getRules, llm, onDraft, send, log, state, persist } = deps
+  const { api, getRules, llm, onDraft, send, log, state, persist, requireApproval, onUsage, control } = deps
+
+  const now = () => new Date().toISOString()
+  const errMsg = (e) => String((e && e.message) || e)
+  const patch = (p) => { state.job = { ...(state.job ?? {}), ...p }; persist() }
+  const num = (v, lo, hi, d) => {
+    const n = Number(v)
+    return Number.isFinite(n) ? Math.min(hi, Math.max(lo, n)) : d
+  }
+  const addError = (m) => {
+    const errors = Array.isArray(state.job?.errors) ? state.job.errors.slice() : []
+    errors.push(m)
+    patch({ errors: errors.slice(-50) })
+  }
+
+  // ---- 处理过的评论：loop 模式下避免对同一条评论反复生成草稿 ----
+  const SEEN_TTL_MS = 7 * 24 * 3600 * 1000
+  const seenMap = () => {
+    if (!state.seen || typeof state.seen !== 'object') state.seen = {}
+    return state.seen
+  }
+  const seenHit = (id) => {
+    const at = seenMap()[String(id)]
+    return !!at && (Date.now() - new Date(at).getTime()) < SEEN_TTL_MS
+  }
+  const seenMark = (id) => {
+    const m = seenMap()
+    m[String(id)] = now()
+    const cut = Date.now() - SEEN_TTL_MS
+    for (const [k, v] of Object.entries(m)) {
+      if (new Date(v).getTime() < cut) delete m[k]
+    }
+  }
 
   const asArray = (v) => (Array.isArray(v) ? v : (v?.feeds ?? []))
 
@@ -102,69 +143,49 @@ export function createRunner(deps) {
     })
     for await (const c of iter) {
       if (c?.type === 'text-delta') parts.push(c.text)
+      else if (c?.type === 'usage' && c.usage) onUsage?.(c.usage)
     }
     return parts.join('').trim().replace(/^["'「]|["'」]$/g, '')
   }
 
-  /**
-   * @param {{mode:'test'|'start', keywords?:string[]}} opts
-   */
-  async function run(opts) {
+  /** 跑一轮：搜索 → 逐篇抓评论 → 按规则筛 → 生成草稿（审核模式下不发送）。 */
+  async function runCycle(cycleNo) {
     const rules = getRules()
-    const mode = opts.mode === 'test' ? 'test' : 'start'
-    const keywords = (opts.keywords?.length ? opts.keywords : rules.keywords ?? []).filter(Boolean).slice(0, 3)
-    if (!keywords.length) return { ok: false, error: '先在「规则」里填搜索语句/关键词' }
+    const keywords = (rules.keywords ?? []).filter(Boolean).slice(0, 3)
+    if (!keywords.length) throw new Error('先在「规则」里填搜索关键词')
 
-    const job = {
-      id: String(Date.now()),
-      mode,
-      phase: 'searching',
-      keywords,
-      notesTotal: 0,
-      notesDone: 0,
-      candidates: 0,
-      drafted: 0,
-      sent: 0,
-      errors: [],
-      startedAt: new Date().toISOString(),
-      finishedAt: null,
-    }
-    state.job = job
-    persist()
+    patch({ phase: 'searching', current: { action: 'searching', keyword: null, cycle: cycleNo } })
 
     const noteMap = new Map()
     for (const kw of keywords) {
-      job.phase = `searching:${kw}`
-      persist()
+      await control.checkpoint()
+      patch({ phase: `searching:${kw}`, current: { action: 'searching', keyword: kw, cycle: cycleNo } })
       try {
         const feeds = await searchOnce(kw, rules)
-        for (const n of pickNotes(feeds, rules)) if (n.feedId && !noteMap.has(n.feedId)) noteMap.set(n.feedId, n)
+        let hit = 0
+        for (const n of pickNotes(feeds, rules)) {
+          hit += 1
+          if (n.feedId && !noteMap.has(n.feedId)) noteMap.set(n.feedId, n)
+        }
+        patch({ noteHits: (state.job?.noteHits ?? 0) + hit, feedsScanned: (state.job?.feedsScanned ?? 0) + feeds.length })
       } catch (e) {
-        job.errors.push(`搜索「${kw}」失败：${String(e?.message ?? e)}`)
+        addError(`搜索「${kw}」失败：${errMsg(e)}`)
       }
       await sleep(1200)
     }
 
-    const notes = [...noteMap.values()].slice(0, 6)
-    job.notesTotal = notes.length
-    job.phase = 'collecting'
-    persist()
+    const maxNotes = num(rules.reply_policy?.max_notes_per_cycle, 1, 50, 6)
+    const notes = [...noteMap.values()].slice(0, maxNotes)
+    patch({ notesTotal: (state.job?.notesTotal ?? 0) + notes.length, cycleNotes: notes.length, cycleDone: 0 })
 
-    if (mode === 'test') {
-      const preview = []
-      for (const [kw] of keywords.map((k) => [k])) { /* noop */ }
-      for (const n of notes) preview.push({ title: n.title, liked: n.liked, feedId: n.feedId })
-      job.phase = 'done'
-      job.finishedAt = new Date().toISOString()
-      job.preview = preview
-      persist()
-      return { ok: true, job, preview }
-    }
-
-    const maxPerNote = rules.reply_policy?.max_per_note ?? 2
+    const maxPerNote = num(rules.reply_policy?.max_per_note, 1, 20, 3)
     for (const note of notes) {
-      job.phase = `comments:${note.title.slice(0, 12)}`
-      persist()
+      await control.checkpoint()
+      patch({
+        phase: `comments:${String(note.title).slice(0, 12)}`,
+        current: { action: 'comments', noteTitle: note.title, feedId: note.feedId, cycle: cycleNo },
+      })
+
       let detail
       try {
         detail = await api('/feeds/detail', {
@@ -179,29 +200,47 @@ export function createRunner(deps) {
           },
         })
       } catch (e) {
-        job.errors.push(`抓评论失败：${String(e?.message ?? e)}`)
-        job.notesDone += 1
-        persist()
+        addError(`抓评论失败：${errMsg(e)}`)
+        patch({ cycleDone: (state.job?.cycleDone ?? 0) + 1 })
         continue
       }
 
-      const cands = pickComments(detail, rules).slice(0, maxPerNote)
-      job.candidates += cands.length
-      persist()
+      const cands = pickComments(detail, rules)
+      patch({ candidates: (state.job?.candidates ?? 0) + cands.length })
 
+      let used = 0
       for (const c of cands) {
+        if (used >= maxPerNote) break
+        await control.checkpoint()
+        if (seenHit(c.commentId)) {
+          patch({ skippedSeen: (state.job?.skippedSeen ?? 0) + 1 })
+          continue
+        }
+
+        patch({
+          phase: 'generating',
+          current: {
+            action: 'generating',
+            noteTitle: note.title,
+            commentUser: c.user,
+            commentText: String(c.content).slice(0, 60),
+            cycle: cycleNo,
+          },
+        })
+
         let text
         try {
           text = await generateReply(note, c, rules)
         } catch (e) {
-          job.errors.push(`生成文案失败：${String(e?.message ?? e)}`)
+          addError(`生成文案失败：${errMsg(e)}`)
           continue
         }
+
         const rs = rules.reply_style ?? {}
-        if (!text) { job.errors.push('模型返回空文案'); continue }
-        if (text.length > (rs.max_chars ?? 60)) { job.errors.push(`文案超长(${text.length}): ${text.slice(0, 20)}…`); continue }
-        const hit = (rs.banned_words ?? []).find((w) => w && text.includes(w))
-        if (hit) { job.errors.push(`文案含禁用词「${hit}」`); continue }
+        if (!text) { addError('模型返回空文案'); continue }
+        if (text.length > (rs.max_chars ?? 60)) { addError(`文案超长(${text.length}): ${text.slice(0, 20)}…`); continue }
+        const hitWord = (rs.banned_words ?? []).find((w) => w && text.includes(w))
+        if (hitWord) { addError(`文案含禁用词「${hitWord}」`); continue }
 
         const draft = {
           feedId: note.feedId,
@@ -209,31 +248,94 @@ export function createRunner(deps) {
           noteTitle: note.title,
           ...c,
           replyText: text,
-          createdAt: new Date().toISOString(),
-          jobId: job.id,
+          createdAt: now(),
+          jobId: state.job?.id ?? '',
+          cycle: cycleNo,
         }
         onDraft(draft)
-        job.drafted += 1
+        seenMark(c.commentId)
+        patch({
+          drafted: (state.job?.drafted ?? 0) + 1,
+          current: { ...(state.job?.current ?? {}), action: 'drafted', replyText: text.slice(0, 60) },
+        })
+        used += 1
 
-        if (!deps.requireApproval()) {
-          job.phase = 'sending'
-          persist()
+        // 人工复核关闭时才自动发；开启时草稿停在清单里等人点
+        if (!requireApproval()) {
+          await control.checkpoint()
+          patch({ phase: 'sending' })
           const r = await send({ feedId: note.feedId, xsecToken: note.xsecToken, commentId: c.commentId, text })
-          if (r?.ok) job.sent += 1
-          else job.errors.push(`发送失败：${r?.blocked ?? r?.error ?? 'unknown'}`)
+          if (r?.ok) patch({ sent: (state.job?.sent ?? 0) + 1 })
+          else addError(`发送失败：${r?.blocked ?? r?.error ?? 'unknown'}`)
           await sleep(1500)
         }
       }
-      job.notesDone += 1
-      persist()
+
+      patch({ cycleDone: (state.job?.cycleDone ?? 0) + 1, notesDone: (state.job?.notesDone ?? 0) + 1 })
       await sleep(800)
     }
+  }
 
-    job.phase = 'done'
-    job.finishedAt = new Date().toISOString()
+  /**
+   * @param {{mode?:'once'|'loop'}} opts
+   */
+  async function run(opts = {}) {
+    const mode = opts.mode === 'loop' ? 'loop' : 'once'
+    control.reset()
+    state.job = {
+      id: String(Date.now()),
+      mode,
+      status: 'running',
+      phase: 'starting',
+      current: null,
+      cycles: 0,
+      notesTotal: 0,
+      notesDone: 0,
+      noteHits: 0,
+      feedsScanned: 0,
+      candidates: 0,
+      drafted: 0,
+      sent: 0,
+      skippedSeen: 0,
+      errors: [],
+      tokens: { input: 0, output: 0, total: 0, calls: 0 },
+      startedAt: now(),
+      finishedAt: null,
+    }
     persist()
-    log(`run ${job.id} done: notes=${job.notesTotal} drafted=${job.drafted} sent=${job.sent} errors=${job.errors.length}`)
-    return { ok: true, job }
+
+    try {
+      do {
+        state.job.cycles = (state.job.cycles ?? 0) + 1
+        patch({ phase: 'cycle-start' })
+        await runCycle(state.job.cycles)
+
+        if (mode === 'once') break
+
+        // 轮间等待：仍然响应暂停与终止
+        const gap = num(getRules().reply_policy?.cycle_interval_sec, 10, 3600, 60)
+        patch({
+          phase: 'idle-between-cycles',
+          current: { action: 'waiting', seconds: gap, nextCycle: state.job.cycles + 1 },
+        })
+        for (let s = 0; s < gap; s++) {
+          await control.checkpoint()
+          await sleep(1000)
+        }
+      } while (true)
+
+      patch({ status: 'done', phase: 'done', current: null, finishedAt: now() })
+      log(`run done: mode=${mode} cycles=${state.job.cycles} drafted=${state.job.drafted} sent=${state.job.sent}`)
+    } catch (e) {
+      if (e === STOP) {
+        patch({ status: 'stopped', phase: 'stopped', current: null, finishedAt: now() })
+        log(`run stopped: cycles=${state.job.cycles} drafted=${state.job.drafted}`)
+      } else {
+        addError(errMsg(e))
+        patch({ status: 'error', phase: 'error', current: null, finishedAt: now() })
+        log(`run error: ${errMsg(e)}`)
+      }
+    }
   }
 
   return { run }

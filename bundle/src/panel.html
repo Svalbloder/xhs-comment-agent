@@ -33,10 +33,37 @@
   .toast{position:fixed;right:20px;bottom:20px;background:#232833;border:1px solid var(--line);padding:10px 14px;border-radius:8px;opacity:0;transition:.2s}
   .toast.show{opacity:1}
   .hint{color:var(--mut);font-size:12px}
+  .tags{display:flex;flex-wrap:wrap;gap:6px;align-items:center;background:#0d1015;border:1px solid var(--line);border-radius:8px;padding:6px;min-height:42px}
+  .tags input{flex:1;min-width:130px;border:0;background:transparent;padding:4px 2px;outline:0;width:auto}
+  .tag{display:inline-flex;align-items:center;gap:6px;background:#232833;border-radius:999px;padding:2px 4px 2px 10px;font-size:12px;max-width:100%}
+  .tag span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .tag button{background:transparent;color:var(--mut);padding:0 5px;font-size:15px;line-height:1.1;border-radius:50%}
+  .tag button:hover{color:var(--acc)}
+  .remote-note{display:none;background:rgba(230,162,60,.12);color:var(--warn);border:1px solid rgba(230,162,60,.3);border-radius:8px;padding:8px 10px;font-size:12px;margin-bottom:12px}
+  body.remote .remote-note{display:block}
+
+  /* 手机竖屏 */
+  @media (max-width:760px){
+    .wrap{padding:14px 12px 48px}
+    .col{min-width:100%}
+    body{font-size:15px}
+    h1{font-size:17px}
+    .card{padding:12px;border-radius:10px}
+    button{padding:12px 16px;font-size:15px}
+    .flex > button{flex:1 1 auto}
+    input,textarea,select{padding:10px 12px;font-size:15px}
+    .tags{padding:8px;min-height:48px}
+    .tag{font-size:13px;padding:4px 4px 4px 10px}
+    .tag button{font-size:17px;padding:0 7px}
+    .quote{font-size:14px}
+    #runProgress,#runTokens{line-height:1.7}
+    .hint{font-size:12px}
+  }
 </style>
 </head>
 <body>
 <div class="wrap">
+  <div class="remote-note">远程模式：可以看进度、开始/暂停/终止，但「发送这条」必须在电脑上点。</div>
   <h1>小红书评论 Agent</h1>
   <div class="sub">本地控制台 · 规则改动即时生效 · 发送需要你点「发送」</div>
 
@@ -45,27 +72,43 @@
   </div>
 
   <div class="card">
-    <div class="flex">
-      <strong>导入客户配置清单</strong>
-      <span class="hint">客户填好的 .xlsx</span>
-      <div class="sp"></div>
-      <input id="xlsx" type="file" accept=".xlsx" style="width:auto">
-      <button class="ghost" onclick="importSheet(false)">解析预览</button>
+    <div class="flex" style="justify-content:space-between">
+      <strong>主控面板</strong>
+      <span class="pill" id="runState">空闲</span>
     </div>
-    <div id="importResult" style="margin-top:12px"></div>
+    <div class="hint" id="runNowText" style="margin-top:6px">还没跑过</div>
+    <div class="hint" id="runProgress" style="margin-top:2px"></div>
+    <div class="hint" id="runTokens" style="margin-top:2px"></div>
+    <div class="flex" style="margin-top:12px">
+      <button id="btnStart" onclick="runNow('loop')">开始（持续跑）</button>
+      <button id="btnOnce" class="ghost" onclick="runNow('once')">跑一轮</button>
+      <button id="btnPause" class="ghost" onclick="ctrl('pause')">暂停</button>
+      <button id="btnResume" class="ghost" onclick="ctrl('resume')">继续</button>
+      <button id="btnStop" class="ghost" onclick="ctrl('stop')">终止</button>
+    </div>
+    <div style="margin-top:14px;padding-top:12px;border-top:1px solid #262b36">
+      <label style="display:block;color:var(--fg);margin-bottom:2px">发送管控</label>
+      <label class="flex" style="margin-top:8px">
+        <input id="requireApproval" type="checkbox" style="width:auto" onchange="saveRules()"> <span style="color:var(--fg)">人工复核：每条回复都要在清单里确认后才发送</span>
+      </label>
+      <label class="flex" style="margin-top:8px">
+        <input id="dryRun" type="checkbox" style="width:auto" onchange="saveRules()"> <span style="color:var(--fg)">演练模式：只生成草稿，不向平台发送</span>
+      </label>
+      <div class="hint" style="margin-top:8px">演练模式优先级最高：开启时任何发送动作（含人工复核）都会被拦截。</div>
+    </div>
   </div>
 
   <div class="card">
     <div class="row">
       <div class="col">
-        <label>关注的关键词（逗号分隔，仅作记录/搜索参考）</label>
-        <input id="keywords" placeholder="露营, 徒步帐篷">
-        <label>评论必须包含任一（每行一个；留空 = 不筛）</label>
-        <textarea id="must_any" placeholder="多少钱&#10;求链接&#10;怎么选"></textarea>
-        <label>评论必须不含（每行一个，黑名单）</label>
-        <textarea id="must_not" placeholder="加微&#10;私信&#10;代购"></textarea>
-        <label>回复里禁用词（每行一个，命中直接拒绝发送）</label>
-        <textarea id="banned_words" placeholder="微信&#10;链接&#10;最低价"></textarea>
+        <label>搜索语句 / 关键词（回车添加一个；最多生效前 3 个）</label>
+        <div class="tags" id="tags-keywords"></div>
+        <label>评论必须包含任一（空 = 不筛）</label>
+        <div class="tags" id="tags-must_any"></div>
+        <label>评论必须不含（黑名单）</label>
+        <div class="tags" id="tags-must_not"></div>
+        <label>回复里禁用词（命中直接拒绝发送）</label>
+        <div class="tags" id="tags-banned_words"></div>
       </div>
       <div class="col">
         <label>评论最大字数</label>
@@ -80,9 +123,18 @@
           <div class="col"><label>最小间隔（秒）</label><input id="min_interval_sec" type="number" min="5" max="600"></div>
           <div class="col"><label>回复最大字数</label><input id="max_chars" type="number" min="10" max="300"></div>
         </div>
-        <label class="flex" style="margin-top:12px">
-          <input id="dryRun" type="checkbox" style="width:auto"> <span style="color:var(--fg)">干跑：只存草稿，不真发</span>
-        </label>
+        <div style="margin-top:14px;padding-top:12px;border-top:1px solid #262b36">
+          <label style="display:block;color:var(--fg);margin-bottom:2px">运行节奏</label>
+          <label class="flex" style="margin-top:8px">
+            <span style="color:var(--fg)">每轮间隔（秒）</span>
+            <input id="cycle_interval_sec" type="number" min="10" max="3600" style="width:120px">
+          </label>
+          <label class="flex" style="margin-top:8px">
+            <span style="color:var(--fg)">每轮最多处理笔记数</span>
+            <input id="max_notes_per_cycle" type="number" min="1" max="50" style="width:120px">
+          </label>
+          <div class="hint" style="margin-top:8px">「开始」会按这个节奏一轮接一轮跑，直到你点「终止」。</div>
+        </div>
       </div>
     </div>
     <div class="flex" style="margin-top:14px">
@@ -111,9 +163,66 @@ const $ = (id) => document.getElementById(id)
 const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))
 function toast(msg){ const t=$('toast'); t.textContent=msg; t.classList.add('show'); setTimeout(function(){t.classList.remove('show')},1800) }
 
-async function load(){
-  const r = await fetch('/api/state'); S = await r.json()
-  const st = S.status
+/* ---------- 标签式输入：回车/点「添加」生成一个标签，点 × 删除 ---------- */
+const TAG_PH = {
+  keywords: '输入关键词后回车，例如：上海 露营 免费营地',
+  must_any: '输入必含词后回车，例如：多少钱',
+  must_not: '输入黑名单词后回车，例如：加微',
+  banned_words: '输入禁用词后回车，例如：微信'
+}
+const TAGS = { keywords: [], must_any: [], must_not: [], banned_words: [] }
+
+function renderTags(name){
+  const box = $('tags-' + name)
+  if(!box) return
+  const focused = box.contains(document.activeElement)
+  box.innerHTML = ''
+  TAGS[name].forEach(function(v, i){
+    const tag = document.createElement('span'); tag.className = 'tag'
+    const txt = document.createElement('span'); txt.textContent = v
+    const del = document.createElement('button'); del.type = 'button'; del.textContent = '×'; del.title = '删除'
+    del.onclick = function(){ TAGS[name].splice(i, 1); renderTags(name); focusTagInput(name) }
+    tag.appendChild(txt); tag.appendChild(del); box.appendChild(tag)
+  })
+  const inp = document.createElement('input')
+  inp.placeholder = TAGS[name].length ? '继续添加…' : TAG_PH[name]
+  inp.onkeydown = function(e){
+    if(e.key === 'Enter'){ e.preventDefault(); addTag(name, inp.value) }
+    else if(e.key === 'Backspace' && !inp.value && TAGS[name].length){ TAGS[name].pop(); renderTags(name); focusTagInput(name) }
+  }
+  box.appendChild(inp)
+  if(focused) inp.focus()
+}
+
+function addTag(name, raw){
+  const v = String(raw || '').trim()
+  if(!v) return
+  if(TAGS[name].indexOf(v) === -1) TAGS[name].push(v)
+  renderTags(name)
+  focusTagInput(name)
+}
+
+function focusTagInput(name){
+  const box = $('tags-' + name); if(!box) return
+  const inp = box.querySelector('input'); if(inp){ inp.value = ''; inp.focus() }
+}
+
+function tagsBeingEdited(){
+  const a = document.activeElement
+  return !!(a && a.closest && a.closest('.tags'))
+}
+
+function syncTags(name, arr){
+  const next = (arr || []).slice()
+  if(next.join('\u0000') === TAGS[name].join('\u0000')) return   // 没变就别重建，避免打断输入
+  TAGS[name] = next
+  renderTags(name)
+}
+
+// 初始渲染：值为空时 syncTags 会跳过，必须先把输入框建出来
+Object.keys(TAGS).forEach(renderTags)
+
+function renderStatus(st){
   const logged = st.login && st.login.is_logged_in
   $('status').innerHTML =
     '<span class="pill '+(st.healthy?'ok':'bad')+'">服务 '+(st.healthy?'在线':'离线')+'</span>' +
@@ -122,14 +231,27 @@ async function load(){
     '<span class="pill">本小时 '+st.quota.hourCount+'/'+st.quota.hourly_quota+'</span>' +
     '<span class="pill">已发送 '+st.sentTotal+'</span>' +
     (st.hardStopped?'<span class="pill bad">已熔断</span>':'')
+  renderControl(st)
+}
+
+async function load(){
+  const r = await fetch('/api/state'); S = await r.json()
+  const st = S.status
+  if(S.local === false) document.body.classList.add('remote')
+  else document.body.classList.remove('remote')
+  renderStatus(st)
   const r0 = S.rules || {}
   const cg = r0.comment_gate || {}
   const rp = r0.reply_policy || {}
   const rs = r0.reply_style || {}
-  $('keywords').value = (r0.keywords||[]).join(', ')
-  $('must_any').value = (cg.must_any||[]).join('\n')
-  $('must_not').value = (cg.must_not||[]).join('\n')
-  $('banned_words').value = (rs.banned_words||[]).join('\n')
+  if(tagsBeingEdited()){
+    // 正在输入标签时不要被 15s 轮询覆盖
+  } else {
+    syncTags('keywords', r0.keywords)
+    syncTags('must_any', cg.must_any)
+    syncTags('must_not', cg.must_not)
+    syncTags('banned_words', rs.banned_words)
+  }
   $('max_len').value = cg.max_len != null ? cg.max_len : 120
   $('max_per_note').value = rp.max_per_note != null ? rp.max_per_note : 2
   $('hourly_quota').value = rp.hourly_quota != null ? rp.hourly_quota : 5
@@ -137,19 +259,21 @@ async function load(){
   $('min_interval_sec').value = rp.min_interval_sec != null ? rp.min_interval_sec : 45
   $('max_chars').value = rs.max_chars != null ? rs.max_chars : 60
   $('dryRun').checked = !!st.dryRun
+  $('requireApproval').checked = st.requireApproval !== false
+  $('cycle_interval_sec').value = rp.cycle_interval_sec != null ? rp.cycle_interval_sec : 60
+  $('max_notes_per_cycle').value = rp.max_notes_per_cycle != null ? rp.max_notes_per_cycle : 6
   $('rulesPath').textContent = S.rulesPath || ''
   renderDrafts(S.drafts || [])
 }
 
-function lines(id){ return $(id).value.split('\n').map(function(s){return s.trim()}).filter(Boolean) }
-
 async function saveRules(){
   const body = {
-    keywords: $('keywords').value.split(',').map(function(s){return s.trim()}).filter(Boolean),
-    comment_gate: { level:[1,2], must_any: lines('must_any'), must_not: lines('must_not'), max_len: +$('max_len').value || 120 },
-    reply_policy: { max_per_note:+$('max_per_note').value||2, hourly_quota:+$('hourly_quota').value||5, daily_quota:+$('daily_quota').value||20, min_interval_sec:+$('min_interval_sec').value||45 },
-    reply_style: { max_chars:+$('max_chars').value||60, banned_words: lines('banned_words') },
-    dry_run: $('dryRun').checked
+    keywords: TAGS.keywords.slice(),
+    comment_gate: { level:[1,2], must_any: TAGS.must_any.slice(), must_not: TAGS.must_not.slice(), max_len: +$('max_len').value || 120 },
+    reply_policy: { max_per_note:+$('max_per_note').value||2, hourly_quota:+$('hourly_quota').value||5, daily_quota:+$('daily_quota').value||20, min_interval_sec:+$('min_interval_sec').value||45, cycle_interval_sec:+$('cycle_interval_sec').value||60, max_notes_per_cycle:+$('max_notes_per_cycle').value||6 },
+    reply_style: { max_chars:+$('max_chars').value||60, banned_words: TAGS.banned_words.slice() },
+    dry_run: $('dryRun').checked,
+    require_approval: $('requireApproval').checked
   }
   const r = await fetch('/api/rules', {method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify(body)})
   const j = await r.json()
@@ -173,7 +297,9 @@ function renderDrafts(list){
       '<div class="quote">'+esc(d.content||'')+'</div>' +
       '<textarea id="t'+i+'" style="min-height:52px">'+esc(d.replyText||'')+'</textarea>' +
       '<div class="flex" style="margin-top:8px">' +
-        '<button class="small" onclick="send('+i+')"'+(d.sent?' disabled':'')+'>发送这条</button>' +
+        (S.local === false
+          ? '<span class="hint">发送需在电脑上确认</span>'
+          : '<button class="small" onclick="send('+i+')"'+(d.sent?' disabled':'')+'>发送这条</button>') +
         '<button class="ghost small" onclick="skip('+i+')">跳过</button>' +
         '<span class="hint" id="m'+i+'"></span>' +
       '</div></div>'
@@ -199,62 +325,90 @@ async function skip(i){
   load()
 }
 
-/* ---------- 导入 Excel ---------- */
-let importBuf = null
+/* ---------- 主控面板 ---------- */
+const ACTION_DESC = {
+  searching: (c) => '正在搜索「' + (c.keyword || '…') + '」',
+  comments: (c) => '抓评论：' + (c.noteTitle || ''),
+  generating: (c) => '生成回复：@' + (c.commentUser || '') + ' 「' + (c.commentText || '') + '」',
+  drafted: (c) => '草稿已生成：' + (c.replyText || ''),
+  waiting: (c) => '等下一轮（约 ' + (c.seconds || 0) + ' 秒）'
+}
 
-async function importSheet(apply){
-  const f = $('xlsx').files && $('xlsx').files[0]
-  if(!f){ toast('先选一个 .xlsx 文件'); return }
-  if(!importBuf || importBuf.__name !== f.name + f.size){
-    importBuf = await f.arrayBuffer()
+function fmtNum(n){ return Number(n || 0).toLocaleString('zh-CN') }
+
+function renderControl(st){
+  const job = st.job || null
+  const running = !!st.running
+  const paused = !!st.paused
+  let label = '空闲', cls = ''
+  if (job) {
+    const s = job.status
+    if (s === 'running') { label = '运行中'; cls = 'ok' }
+    else if (s === 'paused') label = '已暂停'
+    else if (s === 'stopping') label = '正在终止…'
+    else if (s === 'stopped') label = '已停止'
+    else if (s === 'done') label = '已完成'
+    else if (s === 'error') { label = '出错'; cls = 'bad' }
   }
-  const r = await fetch('/api/import' + (apply ? '?apply=1' : ''), {
-    method:'POST',
-    headers:{'content-type':'application/octet-stream'},
-    body: importBuf
-  })
+  if (paused) label = '已暂停'
+  if ($('runState')) { $('runState').textContent = label; $('runState').className = 'pill ' + cls }
+
+  let what = '还没跑过'
+  const cur = job && job.current
+  if (cur && ACTION_DESC[cur.action]) what = ACTION_DESC[cur.action](cur)
+  else if (job && job.status === 'done') what = '这一轮已结束'
+  else if (job && job.status === 'stopped') what = '已终止'
+  if ($('runNowText')) $('runNowText').textContent = what
+
+  if ($('runProgress')) {
+    $('runProgress').textContent = (job && job.status)
+      ? '第 ' + (job.cycles || 0) + ' 轮 · 笔记 ' + (job.notesDone || 0) + '/' + (job.notesTotal || 0) +
+        ' · 候选 ' + (job.candidates || 0) + ' · 草稿 ' + (job.drafted || 0) + ' · 已发 ' + (job.sent || 0) +
+        ((job.errors && job.errors.length) ? (' · 错误 ' + job.errors.length) : '')
+      : ''
+  }
+
+  const t = (job && job.tokens) || { input: 0, output: 0, total: 0, calls: 0 }
+  const u = st.usage || { input: 0, output: 0, total: 0, calls: 0 }
+  if ($('runTokens')) {
+    $('runTokens').textContent = '本轮 token ' + fmtNum(t.total) + '（入 ' + fmtNum(t.input) + ' / 出 ' + fmtNum(t.output) +
+      ' · ' + (t.calls || 0) + ' 次调用） ｜ 累计 ' + fmtNum(u.total)
+  }
+
+  if ($('btnStart')) $('btnStart').disabled = running
+  if ($('btnOnce')) $('btnOnce').disabled = running
+  if ($('btnPause')) $('btnPause').disabled = !running || paused
+  if ($('btnResume')) $('btnResume').disabled = !paused
+  if ($('btnStop')) $('btnStop').disabled = !running
+}
+
+async function runNow(mode){
+  if (mode === 'loop' && !confirm('「开始」会一轮接一轮持续跑，直到你点「终止」。确认开始？')) return
+  const r = await fetch('/api/run', {method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({mode: mode})})
   const j = await r.json()
-  if(!j.ok){ $('importResult').innerHTML = '<span class="pill bad">解析失败</span> ' + esc(j.error||''); return }
-  renderImport(j, apply)
-  if(apply){ toast('已应用客户配置'); load() }
+  if(!j.ok) toast(j.busy ? '还在跑，先暂停或终止' : ('启动失败：'+(j.error||'')))
+  else toast(mode === 'loop' ? '已开始持续运行' : '已开始跑一轮')
+  poll()
 }
 
-function renderImport(j, applied){
-  const r = j.rules
-  const cg = r.comment_gate || {}, rp = r.reply_policy || {}, rs = r.reply_style || {}
-  const rows = [
-    ['客户', r.account_label || '（未填）'],
-    ['关键词', (r.keywords||[]).join('、') || '（未填）'],
-    ['回复范围', r.scope === 'own' ? '自己的笔记' : (r.scope === 'both' ? '两者都要' : '别人的笔记')],
-    ['干跑', r.dry_run ? '是（不会真发）' : '否（会真发）'],
-    ['回复层级', (cg.level||[]).join('、')],
-    ['评论须含', (cg.must_any||[]).join('、') || '（不筛）'],
-    ['黑名单', (cg.must_not||[]).join('、') || '（无）'],
-    ['配额', '每小时 ' + rp.hourly_quota + ' · 每天 ' + rp.daily_quota + ' · 单篇 ' + rp.max_per_note],
-    ['间隔', rp.min_interval_sec + ' 秒'],
-    ['语气', rs.tone || '（未填）'],
-    ['回复字数', rs.max_chars],
-    ['禁用词', (rs.banned_words||[]).join('、') || '（无）']
-  ]
-  let html = '<div class="hint" style="margin-bottom:8px">读到 ' + j.filled + ' 个字段</div>'
-  html += '<table style="width:100%;border-collapse:collapse;font-size:13px">'
-  for(const [k,v] of rows){
-    html += '<tr><td style="padding:5px 8px;color:#8b93a7;width:110px;border-bottom:1px solid #262b36">'+esc(k)+'</td>' +
-            '<td style="padding:5px 8px;border-bottom:1px solid #262b36">'+esc(v)+'</td></tr>'
-  }
-  html += '</table>'
-  if(j.missing && j.missing.length){
-    html += '<div style="margin-top:10px"><span class="pill bad">缺必填</span>' + j.missing.map(esc).join('、') + '</div>'
-  }
-  if(j.warnings && j.warnings.length){
-    html += '<div style="margin-top:8px">' + j.warnings.map(function(w){ return '<span class="pill">'+esc(w)+'</span>' }).join('') + '</div>'
-  }
-  html += '<div class="flex" style="margin-top:12px">' +
-    (applied ? '<span class="pill ok">已写入规则</span>' : '<button onclick="importSheet(true)">应用到系统</button>') +
-    '</div>'
-  $('importResult').innerHTML = html
+async function ctrl(action){
+  const r = await fetch('/api/control', {method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({action: action})})
+  const j = await r.json()
+  if(!j.ok) toast(j.error || '操作失败')
+  else toast(action==='pause' ? '已暂停' : action==='resume' ? '已继续' : '正在终止…')
+  poll()
 }
 
-load(); setInterval(load, 15000)
+async function poll(){
+  try{
+    const r = await fetch('/api/state')
+    const s = await r.json()
+    if(!s || !s.status) return
+    S = s
+    renderStatus(s.status)
+  }catch(e){ /* 面板重启中，忽略这一拍 */ }
+}
+
+load(); setInterval(load, 15000); setInterval(poll, 2500)
 </script>
 </body></html>

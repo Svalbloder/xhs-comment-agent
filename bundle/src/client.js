@@ -33,6 +33,12 @@
   .xhs-tab{padding:4px 10px;border-radius:8px;cursor:pointer;border:1px solid transparent}
   .xhs-tab.on{border-color:rgba(127,127,127,.45);background:rgba(127,127,127,.12)}
   .xhs-warn{color:#e6a23c;font-size:11px}
+  .xhs-tags{display:flex;flex-wrap:wrap;gap:6px;align-items:center;border:1px solid rgba(127,127,127,.35);border-radius:8px;padding:6px;min-height:38px;box-sizing:border-box}
+  .xhs-tag{display:inline-flex;align-items:center;gap:4px;padding:2px 4px 2px 8px;border-radius:999px;background:rgba(127,127,127,.16);font-size:12px;max-width:100%}
+  .xhs-tag-t{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .xhs-tag-x{border:0;background:transparent;color:inherit;opacity:.6;cursor:pointer;font-size:14px;line-height:1;padding:0 3px}
+  .xhs-tag-x:hover{opacity:1;color:#ff4d67}
+  .xhs-tag-input{flex:1;min-width:100px;border:0;background:transparent;color:inherit;font:inherit;outline:0;padding:2px}
   `
 
   function injectCss() {
@@ -57,102 +63,171 @@
   function makePanel(React) {
     const h = React.createElement
     const { useCallback, useEffect, useState } = React
-  const PHASE = { searching: '搜索中', collecting: '抓评论', sending: '发送中', done: '完成', error: '出错' }
-  function jobLine(job) {
-    if (!job) return '还没跑过'
-    const p = String(job.phase || '')
-    const seg = p.split(':')
-    const head = seg.length > 1 ? ((PHASE[seg[0]] || seg[0]) + ' ' + seg[1].slice(0, 14)) : (PHASE[p] || p)
-    const parts = [head]
-    if (job.drafted != null) parts.push('草稿 ' + job.drafted)
-    if (job.sent != null) parts.push('发送 ' + job.sent)
-    if (job.errors && job.errors.length) parts.push('错误 ' + job.errors.length)
-    return parts.join(' · ')
+  const PHASE_LABEL = { searching: '搜索中', collecting: '抓评论', sending: '发送中', done: '完成', error: '出错' }
+  const fmt = (n) => Number(n || 0).toLocaleString('zh-CN')
+  function statusLabel(job) {
+    if (!job) return '空闲'
+    const s = job.status
+    if (s === 'running') return '运行中'
+    if (s === 'paused') return '已暂停'
+    if (s === 'stopping') return '正在终止…'
+    if (s === 'stopped') return '已停止'
+    if (s === 'done') return '已完成'
+    if (s === 'error') return '出错'
+    return '空闲'
+  }
+  function statusTone(job) {
+    if (!job) return ''
+    if (job.status === 'running' || job.status === 'done') return 'ok'
+    if (job.status === 'error') return 'bad'
+    return ''
+  }
+  function describeNow(job) {
+    const c = job && job.current
+    if (!c) {
+      if (job && job.status === 'done') return '这一轮已结束'
+      if (job && job.status === 'stopped') return '已终止'
+      return '还没跑过'
+    }
+    if (c.action === 'searching') return '正在搜索「' + (c.keyword || '…') + '」'
+    if (c.action === 'comments') return '抓评论：' + (c.noteTitle || '')
+    if (c.action === 'generating') return '生成回复：@' + (c.commentUser || '') + ' 「' + (c.commentText || '') + '」'
+    if (c.action === 'drafted') return '草稿已生成：' + (c.replyText || '')
+    if (c.action === 'waiting') return '等下一轮（约 ' + (c.seconds || 0) + ' 秒）'
+    return ''
+  }
+  function describeProgress(job) {
+    if (!job || !job.status) return ''
+    return '第 ' + (job.cycles || 0) + ' 轮 · 笔记 ' + (job.notesDone || 0) + '/' + (job.notesTotal || 0) +
+      ' · 候选 ' + (job.candidates || 0) + ' · 草稿 ' + (job.drafted || 0) + ' · 已发 ' + (job.sent || 0) +
+      ((job.errors && job.errors.length) ? (' · 错误 ' + job.errors.length) : '')
+  }
+  function describeTokens(job, st) {
+    const t = (job && job.tokens) || { input: 0, output: 0, total: 0, calls: 0 }
+    const u = (st && st.usage) || { total: 0 }
+    return '本轮 token ' + fmt(t.total) + '（入 ' + fmt(t.input) + ' / 出 ' + fmt(t.output) + ' · ' +
+      (t.calls || 0) + ' 次调用） ｜ 累计 ' + fmt(u.total)
   }
 
-    return function XhsPanel() {
-      const [state, setState] = useState(null)
-      const [tab, setTab] = useState('drafts')
+  // 标签式输入：回车或点「添加」生成一个标签，点 × 删除；Backspace 删最后一个。
+  function ChipField(props) {
+    const { value, placeholder, onChange } = props
+    const list = Array.isArray(value) ? value : []
+    const [text, setText] = useState('')
+    const add = () => {
+      const v = String(text || '').trim()
+      if (!v) return
+      if (!list.includes(v)) onChange(list.concat([v]))
+      setText('')
+    }
+    return h('div', { className: 'xhs-tags' },
+      list.map((v, i) => h('span', { className: 'xhs-tag', key: v + '#' + i },
+        h('span', { className: 'xhs-tag-t' }, v),
+        h('button', {
+          className: 'xhs-tag-x', type: 'button', title: '删除',
+          onClick: () => onChange(list.filter((_, k) => k !== i)),
+        }, '×'))),
+      h('input', {
+        className: 'xhs-tag-input',
+        value: text,
+        placeholder: list.length ? '继续添加…' : placeholder,
+        onChange: (e) => setText(e.target.value),
+        onKeyDown: (e) => {
+          if (e.key === 'Enter') { e.preventDefault(); add() }
+          if (e.key === 'Backspace' && !text && list.length) onChange(list.slice(0, -1))
+        },
+      }),
+      h('button', { className: 'xhs-btn', type: 'button', onClick: add, disabled: !String(text || '').trim() }, '添加'),
+    )
+  }
+
+    return function XhsPanel() {      const [state, setState] = useState(null)
+      const [tab, setTab] = useState('main')
       const [form, setForm] = useState(null)
       const [msg, setMsg] = useState('')
       const [busy, setBusy] = useState(false)
-      const [running, setRunning] = useState(false)
 
       const load = useCallback(async () => {
         const s = await api('/api/state')
         if (!s || !s.status) return
         setState(s)
         setForm((prev) => prev ?? {
-          keywords: (s.rules.keywords || []).join('\n'),
+          keywords: (s.rules.keywords || []).slice(),
           require_approval: s.status.requireApproval !== false,
-          must_any: ((s.rules.comment_gate || {}).must_any || []).join('\n'),
-          must_not: ((s.rules.comment_gate || {}).must_not || []).join('\n'),
+          must_any: (((s.rules.comment_gate || {}).must_any) || []).slice(),
+          must_not: (((s.rules.comment_gate || {}).must_not) || []).slice(),
           max_len: (s.rules.comment_gate || {}).max_len ?? 120,
           max_per_note: (s.rules.reply_policy || {}).max_per_note ?? 2,
           hourly_quota: (s.rules.reply_policy || {}).hourly_quota ?? 5,
           daily_quota: (s.rules.reply_policy || {}).daily_quota ?? 20,
           min_interval_sec: (s.rules.reply_policy || {}).min_interval_sec ?? 45,
+          cycle_interval_sec: (s.rules.reply_policy || {}).cycle_interval_sec ?? 60,
+          max_notes_per_cycle: (s.rules.reply_policy || {}).max_notes_per_cycle ?? 6,
           max_chars: (s.rules.reply_style || {}).max_chars ?? 60,
-          banned_words: ((s.rules.reply_style || {}).banned_words || []).join('\n'),
+          banned_words: (((s.rules.reply_style || {}).banned_words) || []).slice(),
           dry_run: !!(s.rules.dry_run ?? s.status.dryRun),
         })
       }, [])
 
       useEffect(() => { load() }, [load])
-      useEffect(() => { const t = setInterval(load, 8000); return () => clearInterval(t) }, [load])
+      useEffect(() => { const t = setInterval(load, 4000); return () => clearInterval(t) }, [load])
 
-      const save = async () => {
+      const save = async (override) => {
+        const f = override || form
         setBusy(true)
-        const lines = (v) => String(v || '').split('\n').map((x) => x.trim()).filter(Boolean)
         const r = await api('/api/rules', {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({
-            keywords: lines(form.keywords),
-            require_approval: !!form.require_approval,
-            comment_gate: { level: [1, 2], must_any: lines(form.must_any), must_not: lines(form.must_not), max_len: +form.max_len || 120 },
-            reply_policy: { max_per_note: +form.max_per_note || 2, hourly_quota: +form.hourly_quota || 5, daily_quota: +form.daily_quota || 20, min_interval_sec: +form.min_interval_sec || 45 },
-            reply_style: { max_chars: +form.max_chars || 60, banned_words: lines(form.banned_words) },
-            dry_run: !!form.dry_run,
+            keywords: f.keywords,
+            require_approval: !!f.require_approval,
+            comment_gate: { level: [1, 2], must_any: f.must_any, must_not: f.must_not, max_len: +f.max_len || 120 },
+            reply_policy: { max_per_note: +f.max_per_note || 2, hourly_quota: +f.hourly_quota || 5, daily_quota: +f.daily_quota || 20, min_interval_sec: +f.min_interval_sec || 45, cycle_interval_sec: +f.cycle_interval_sec || 60, max_notes_per_cycle: +f.max_notes_per_cycle || 6 },
+            reply_style: { max_chars: +f.max_chars || 60, banned_words: f.banned_words },
+            dry_run: !!f.dry_run,
           }),
         })
         setBusy(false)
-        setMsg(r && r.ok ? '规则已保存' : '保存失败：' + (r && r.error ? r.error : ''))
+        setMsg(r && r.ok ? '设置已保存' : '保存失败：' + (r && r.error ? r.error : ''))
         setTimeout(() => setMsg(''), 2500)
       }
 
+      const toggleSetting = (key, value) => {
+        const next = { ...form, [key]: value }
+        setForm(next)
+        save(next)
+      }
+
       const runNow = async (mode) => {
-        setRunning(true)
-        setMsg(mode === 'test' ? '测试：只搜索帖子，不抓评论…' : '开始：搜索 → 抓评论 → 生成回复')
         const r = await api('/api/run', {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({ mode }),
         })
         if (!r || !r.ok) {
-          setRunning(false)
-          setMsg(r && r.busy ? '上一轮还在跑，等它结束' : ('启动失败：' + ((r && r.error) || '')))
+          setMsg(r && r.busy ? '还在跑，先暂停或终止' : ('启动失败：' + ((r && r.error) || '')))
           setTimeout(() => setMsg(''), 3000)
           return
         }
-        // 轮询任务状态
-        const timer = setInterval(async () => {
-          const s = await api('/api/state')
-          if (!s || !s.status) return
-          setState(s)
-          const job = s.status.job
-          if (!job || job.phase === 'done' || job.phase === 'error') {
-            clearInterval(timer)
-            setRunning(false)
-            const errs = (job && job.errors) || []
-            setMsg(job && job.phase === 'error'
-              ? ('执行出错：' + errs.join('；'))
-              : (mode === 'test'
-                ? ('测试完成：命中 ' + ((job && job.notesTotal) || 0) + ' 篇笔记')
-                : ('完成：草稿 ' + ((job && job.drafted) || 0) + ' 条，发送 ' + ((job && job.sent) || 0) + ' 条' + (errs.length ? '，错误 ' + errs.length + ' 条' : ''))))
-            setTimeout(() => setMsg(''), 6000)
-          }
-        }, 3000)
+        setMsg(mode === 'loop' ? '已开始持续运行（点「终止」才会停）' : '已开始跑一轮')
+        setTimeout(() => setMsg(''), 3000)
+        load()
+      }
+
+      const ctrl = async (action) => {
+        const r = await api('/api/control', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ action }),
+        })
+        if (!r || !r.ok) {
+          setMsg((r && (r.error || r.blocked)) || '操作失败')
+          setTimeout(() => setMsg(''), 3000)
+          return
+        }
+        setMsg(action === 'pause' ? '已暂停' : action === 'resume' ? '已继续' : '正在终止…')
+        setTimeout(() => setMsg(''), 3000)
+        load()
       }
 
       const send = async (d, text) => {
@@ -179,21 +254,6 @@
         load()
       }
 
-      const importFile = async (file) => {
-        if (!file) return
-        setBusy(true)
-        const buf = await file.arrayBuffer()
-        const r = await api('/api/import?apply=1', {
-          method: 'POST',
-          headers: { 'content-type': 'application/octet-stream' },
-          body: buf,
-        })
-        setBusy(false)
-        setMsg(r && r.ok ? ('已导入 ' + r.filled + ' 个字段') : ('导入失败：' + (r && r.error ? r.error : '')))
-        setTimeout(() => setMsg(''), 4000)
-        load()
-      }
-
       if (!state || !form) return h('div', { className: 'xhs-pane' }, h('div', { className: 'xhs-mut' }, '连接面板中…（首次启动需要几秒）'))
 
       const st = state.status
@@ -209,32 +269,53 @@
         ),
         msg ? h('div', { className: 'xhs-warn' }, msg) : null,
 
-        // 执行区：开始 = 完整跑一轮；测试 = 只搜帖子看看命中
-        h('div', { className: 'xhs-row' },
-          h('button', { className: 'xhs-btn primary', disabled: running, onClick: () => runNow('start') }, running ? '执行中…' : '开始'),
-          h('button', { className: 'xhs-btn', disabled: running, onClick: () => runNow('test') }, '测试'),
-          h('span', { className: 'xhs-mut' }, jobLine(st.job)),
-        ),
-
         h('div', { className: 'xhs-tabs' },
+          h('div', { className: 'xhs-tab ' + (tab === 'main' ? 'on' : ''), onClick: () => setTab('main') }, '主控'),
           h('div', { className: 'xhs-tab ' + (tab === 'drafts' ? 'on' : ''), onClick: () => setTab('drafts') },
             (st.requireApproval === false ? '回复记录' : '回复清单') + ' (' + drafts.length + ')'),
           h('div', { className: 'xhs-tab ' + (tab === 'rules' ? 'on' : ''), onClick: () => setTab('rules') }, '规则'),
-          h('div', { className: 'xhs-tab ' + (tab === 'import' ? 'on' : ''), onClick: () => setTab('import') }, '导入清单'),
         ),
 
+        tab === 'main' ? h('div', { className: 'xhs-card' },
+          h('div', { className: 'xhs-row' },
+            h('span', { className: 'xhs-chip ' + statusTone(st.job) }, statusLabel(st.job)),
+            h('div', { className: 'xhs-sp' }),
+            h('span', { className: 'xhs-mut' }, '第 ' + ((st.job && st.job.cycles) || 0) + ' 轮'),
+          ),
+          h('div', { className: 'xhs-mut', style: { marginTop: 8 } }, describeNow(st.job)),
+          h('div', { className: 'xhs-mut', style: { marginTop: 2 } }, describeProgress(st.job)),
+          h('div', { className: 'xhs-mut', style: { marginTop: 2 } }, describeTokens(st.job, st)),
+          h('div', { className: 'xhs-row', style: { marginTop: 12 } },
+            h('button', { className: 'xhs-btn primary', disabled: st.running, onClick: () => runNow('loop') }, '开始'),
+            h('button', { className: 'xhs-btn', disabled: st.running, onClick: () => runNow('once') }, '跑一轮'),
+          ),
+          h('div', { className: 'xhs-row', style: { marginTop: 6 } },
+            h('button', { className: 'xhs-btn', disabled: !st.running || st.paused, onClick: () => ctrl('pause') }, '暂停'),
+            h('button', { className: 'xhs-btn', disabled: !st.paused, onClick: () => ctrl('resume') }, '继续'),
+            h('button', { className: 'xhs-btn', disabled: !st.running, onClick: () => ctrl('stop') }, '终止'),
+          ),
+          h('div', { className: 'xhs-mut', style: { marginTop: 8 } }, '「开始」会一轮接一轮持续跑，直到点「终止」。'),
+          h('div', { style: { marginTop: 14, paddingTop: 12, borderTop: '1px solid rgba(127,127,127,.25)' } },
+            h('div', { className: 'xhs-label', style: { marginTop: 0 } }, '发送管控'),
+            h('label', { className: 'xhs-row' },
+              h('input', { type: 'checkbox', checked: !!form.require_approval, onChange: (e) => toggleSetting('require_approval', e.target.checked) }),
+              h('span', null, '人工复核：每条回复都要在清单里确认后才发送')),
+            h('label', { className: 'xhs-row' },
+              h('input', { type: 'checkbox', checked: !!form.dry_run, onChange: (e) => toggleSetting('dry_run', e.target.checked) }),
+              h('span', null, '演练模式：只生成草稿，不向平台发送')),
+            h('div', { className: 'xhs-mut', style: { marginTop: 6 } }, '演练模式优先级最高：开启时任何发送动作（含人工复核）都会被拦截。'),
+          ),
+        ) : null,
+
         tab === 'rules' ? h('div', { className: 'xhs-card' },
-          h('label', { className: 'xhs-label' }, '搜索语句 / 关键词（每行一个，最多用前 3 个）'),
-          h('textarea', { className: 'xhs-area', value: form.keywords, onChange: (e) => setForm({ ...form, keywords: e.target.value }), placeholder: '上海 露营 免费营地\n明火 营地' }),
-          h('label', { className: 'xhs-row', style: { marginTop: 10 } },
-            h('input', { type: 'checkbox', checked: !!form.require_approval, onChange: (e) => setForm({ ...form, require_approval: e.target.checked }) }),
-            h('span', null, '审核模式：生成的回复先进清单，我点「发送这条」才发')),
-          h('label', { className: 'xhs-label' }, '评论必须包含其一（每行一个，空 = 不筛）'),
-          h('textarea', { className: 'xhs-area', value: form.must_any, onChange: (e) => setForm({ ...form, must_any: e.target.value }) }),
+          h('label', { className: 'xhs-label' }, '搜索语句 / 关键词（回车添加；最多生效前 3 个）'),
+          h(ChipField, { value: form.keywords, placeholder: '上海 露营 免费营地', onChange: (v) => setForm({ ...form, keywords: v }) }),
+          h('label', { className: 'xhs-label' }, '评论必须包含其一（空 = 不筛）'),
+          h(ChipField, { value: form.must_any, placeholder: '多少钱', onChange: (v) => setForm({ ...form, must_any: v }) }),
           h('label', { className: 'xhs-label' }, '评论不能包含（黑名单）'),
-          h('textarea', { className: 'xhs-area', value: form.must_not, onChange: (e) => setForm({ ...form, must_not: e.target.value }) }),
-          h('label', { className: 'xhs-label' }, '回复里禁用词（每行一个，命中直接拒绝发送）'),
-          h('textarea', { className: 'xhs-area', value: form.banned_words, onChange: (e) => setForm({ ...form, banned_words: e.target.value }) }),
+          h(ChipField, { value: form.must_not, placeholder: '加微', onChange: (v) => setForm({ ...form, must_not: v }) }),
+          h('label', { className: 'xhs-label' }, '回复里禁用词（命中直接拒绝发送）'),
+          h(ChipField, { value: form.banned_words, placeholder: '微信', onChange: (v) => setForm({ ...form, banned_words: v }) }),
           h('div', { className: 'xhs-row' },
             h('div', null, h('label', { className: 'xhs-label' }, '评论字数上限'),
               h('input', { className: 'xhs-input', type: 'number', value: form.max_len, onChange: (e) => setForm({ ...form, max_len: e.target.value }) })),
@@ -253,17 +334,17 @@
             h('div', null, h('label', { className: 'xhs-label' }, '回复字数'),
               h('input', { className: 'xhs-input', type: 'number', value: form.max_chars, onChange: (e) => setForm({ ...form, max_chars: e.target.value }) })),
           ),
-          h('label', { className: 'xhs-row', style: { marginTop: 10 } },
-            h('input', { type: 'checkbox', checked: !!form.dry_run, onChange: (e) => setForm({ ...form, dry_run: e.target.checked }) }),
-            h('span', null, '干跑：只存草稿，不真发')),
+          h('div', { style: { marginTop: 16, paddingTop: 12, borderTop: '1px solid rgba(255,255,255,0.08)' } },
+            h('div', { className: 'xhs-label', style: { marginTop: 0 } }, '运行节奏'),
+            h('div', { className: 'xhs-row' },
+              h('div', null, h('label', { className: 'xhs-label' }, '每轮间隔（秒）'),
+                h('input', { className: 'xhs-input', type: 'number', value: form.cycle_interval_sec, onChange: (e) => setForm({ ...form, cycle_interval_sec: e.target.value }) })),
+              h('div', null, h('label', { className: 'xhs-label' }, '每轮最多处理笔记'),
+                h('input', { className: 'xhs-input', type: 'number', value: form.max_notes_per_cycle, onChange: (e) => setForm({ ...form, max_notes_per_cycle: e.target.value }) })),
+            ),
+            h('div', { className: 'xhs-mut', style: { marginTop: 6 } }, '「开始」按这个节奏一轮接一轮跑，直到点「终止」。')),
           h('div', { className: 'xhs-row', style: { marginTop: 10 } },
             h('button', { className: 'xhs-btn primary', onClick: save, disabled: busy }, '保存规则')),
-        ) : null,
-
-        tab === 'import' ? h('div', { className: 'xhs-card' },
-          h('div', { className: 'xhs-mut' }, '选择客户填好的 .xlsx，导入后立即生效。'),
-          h('input', { type: 'file', accept: '.xlsx', style: { marginTop: 8 }, onChange: (e) => importFile(e.target.files && e.target.files[0]) }),
-          h('div', { className: 'xhs-mut', style: { marginTop: 8 } }, '规则路径：' + (state.rulesPath || '')),
         ) : null,
 
         tab === 'drafts' ? (drafts.length
@@ -326,7 +407,7 @@
               id: TAB_KIND,
               order: 520,
               title: () => '小红书评论',
-              description: () => '审核评论草稿、改规则、导入客户清单',
+              description: () => '控制运行、查看进度与 token、审核草稿、改规则',
               icon: Icon,
             }],
           })

@@ -10,12 +10,12 @@
  *   filters → 必须是对象，不是数组（数组会 400 INVALID_REQUEST）
  */
 import { spawn } from 'node:child_process'
-import { createHash } from 'node:crypto'
+import { createHash, randomBytes } from 'node:crypto'
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { startPanel } from './panel.js'
-import { createRunner } from './run.js'
+import { createRunner, STOP } from './run.js'
 
 // 不 import 任何 @deepseek-ai/* ：本插件通过 profile 补丁以「绝对路径」加载，
 // 那种加载方式下裸导入会从插件目录向上找 node_modules，必然解析失败。
@@ -78,6 +78,19 @@ function applyInner(ctx, config = {}) {
   mkdirSync(stateDir, { recursive: true })
   try { appendFileSync(join(stateDir, 'agent.log'), `${new Date().toISOString()} apply() entered\n`) } catch { /* ignore */ }
 
+  // 面板访问令牌：本机不需要，局域网 / Tailscale 进来的必须带；首次启动生成并落盘
+  const panelToken = (() => {
+    if (config.accessToken) return String(config.accessToken)
+    const p = join(stateDir, 'panel-token.txt')
+    try {
+      const t = readFileSync(p, 'utf8').trim()
+      if (t) return t
+    } catch { /* 还没生成过 */ }
+    const t = randomBytes(16).toString('hex')
+    try { writeFileSync(p, t) } catch { /* 写不了就只用内存里这份 */ }
+    return t
+  })()
+
   // 规则每次调用现读：改 rules.json 立即生效，不需要重启 DSH。
   const getRules = () => {
     try {
@@ -90,6 +103,9 @@ function applyInner(ctx, config = {}) {
           reply_style: { ...DEFAULT_RULES.reply_style, ...(raw.reply_style ?? {}) },
           keywords: raw.keywords ?? [],
           dry_run: typeof raw.dry_run === 'boolean' ? raw.dry_run : undefined,
+          // 审核开关必须原样带回：漏了它 requireApproval() 读到的永远是 undefined，
+          // 于是 `!== false` 恒为真，UI 上的开关就成了摆设。
+          require_approval: typeof raw.require_approval === 'boolean' ? raw.require_approval : undefined,
           _error: null,
         }
       }
@@ -343,7 +359,7 @@ function applyInner(ctx, config = {}) {
       const status = await api('/login/status')
       if (status?.is_logged_in) return { loggedIn: true, user: status.username ?? null }
       const qr = await api('/login/qrcode')
-      const b64 = qr?.qr_code ?? qr?.qrcode ?? qr?.image ?? ''
+      const b64 = qr?.qr_code ?? qr?.qrcode ?? qr?.image ?? qr?.img ?? ''
       const png = join(stateDir, 'login-qrcode.png')
       if (b64.includes('base64,')) writeFileSync(png, Buffer.from(b64.split('base64,')[1], 'base64'))
       else if (b64) writeFileSync(png, Buffer.from(b64, 'base64'))
@@ -550,18 +566,101 @@ function applyInner(ctx, config = {}) {
     state,
     persist,
     requireApproval,
+    // 惰性转发：control / addUsage 在本作用域后面才定义，直接传会在初始化时撞 TDZ
+    control: {
+      reset: () => control.reset(),
+      checkpoint: () => control.checkpoint(),
+    },
+    onUsage: (u) => addUsage(u),
   })
 
   let running = false
+
+  // 运行控制：checkpoint() 在暂停时挂起、终止时抛 STOP，runner 在每次外部调用前调它。
+  const control = {
+    paused: false,
+    stopped: false,
+    waiters: [],
+    reset() { this.paused = false; this.stopped = false; this.waiters = [] },
+    pause() {
+      this.paused = true
+      if (state.job) state.job = { ...state.job, status: 'paused' }
+      persist()
+    },
+    resume() {
+      this.paused = false
+      if (state.job) state.job = { ...state.job, status: 'running' }
+      const w = this.waiters.splice(0)
+      w.forEach((fn) => fn())
+      persist()
+    },
+    stop() {
+      this.stopped = true
+      if (state.job) state.job = { ...state.job, status: 'stopping' }
+      const w = this.waiters.splice(0)
+      w.forEach((fn) => fn())
+      persist()
+    },
+    async checkpoint() {
+      if (this.stopped) throw STOP
+      while (this.paused) {
+        await new Promise((r) => this.waiters.push(r))
+        if (this.stopped) throw STOP
+      }
+      if (this.stopped) throw STOP
+    },
+  }
+
+  // token 用量：llm 流的 { type:'usage' } chunk 自带真实 inputTokens/outputTokens
+  const addUsage = (u) => {
+    const input = Number(u?.inputTokens ?? 0)
+    const output = Number(u?.outputTokens ?? 0)
+    const total = Number(u?.totalTokens ?? (input + output))
+    if (!state.usage || typeof state.usage !== 'object') state.usage = { input: 0, output: 0, total: 0, calls: 0 }
+    state.usage.input += input
+    state.usage.output += output
+    state.usage.total += total
+    state.usage.calls += 1
+    if (state.job) {
+      const t = state.job.tokens ?? { input: 0, output: 0, total: 0, calls: 0 }
+      state.job = {
+        ...state.job,
+        tokens: { input: t.input + input, output: t.output + output, total: t.total + total, calls: t.calls + 1 },
+      }
+    }
+    persist()
+  }
+
   const startRun = (body) => {
-    if (running) return { ok: false, busy: true }
+    if (running) return { ok: false, busy: true, error: '上一轮还在跑，先暂停或终止' }
     running = true
-    const p = runner.run(body ?? {})
+    control.reset()
+    const mode = body?.mode === 'loop' ? 'loop' : 'once'
+    const p = runner.run({ mode })
     p.catch((e) => {
-      state.job = { ...(state.job ?? {}), phase: 'error', errors: [String(e?.message ?? e)] }
+      state.job = { ...(state.job ?? {}), status: 'error', phase: 'error', errors: [String(e?.message ?? e)] }
       persist()
     }).finally(() => { running = false })
-    return { ok: true, started: true }
+    return { ok: true, started: true, mode }
+  }
+
+  const controlRun = (action) => {
+    if (action === 'pause') {
+      if (!running) return { ok: false, error: '当前没有在跑' }
+      control.pause()
+      return { ok: true, status: 'paused' }
+    }
+    if (action === 'resume') {
+      if (!running) return { ok: false, error: '当前没有在跑' }
+      control.resume()
+      return { ok: true, status: 'running' }
+    }
+    if (action === 'stop') {
+      if (!running) return { ok: false, error: '当前没有在跑' }
+      control.stop()
+      return { ok: true, status: 'stopping' }
+    }
+    return { ok: false, error: `未知操作：${action}` }
   }
 
   // --------------------------------------------------------------- panel
@@ -570,6 +669,8 @@ function applyInner(ctx, config = {}) {
     try {
       return startPanel({
         port: Number(config.panelPort ?? 18765),
+        host: config.panelHost ?? '127.0.0.1',
+        token: panelToken,
         rulesPath,
         statePath,
         draftsPath,
@@ -588,12 +689,16 @@ function applyInner(ctx, config = {}) {
             dryRun: effDryRun(),
             requireApproval: requireApproval(),
             job: state.job ?? null,
+            running,
+            paused: control.paused,
+            usage: state.usage ?? { input: 0, output: 0, total: 0, calls: 0 },
             quota: { dayCount: state.dayCount, hourCount: state.hourCount, ...r.reply_policy },
             sentTotal: Object.keys(state.sent).length,
             hardStopped: hardStopped(),
           }
         },
         run: async (body) => startRun(body),
+        control: async (action) => controlRun(action),
         approve: async (d) => {
           const block = guard(String(d.commentId))
           if (block) return { ok: false, blocked: block }

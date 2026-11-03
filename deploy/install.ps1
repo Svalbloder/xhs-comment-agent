@@ -1,4 +1,4 @@
-﻿<#
+<#
 .SYNOPSIS
   小红书评论 Agent —— 客户机安装器（Windows + DSH 桌面端）
 
@@ -113,7 +113,7 @@ $srcDir = Join-Path $PSScriptRoot '..\bundle\src'
 $pkgJson = Join-Path $PSScriptRoot '..\bundle\package.json'
 if (-not (Test-Path $srcDir)) { Die "安装包不完整：找不到 $srcDir" }
 if (-not (Test-Path $pkgJson)) { Die "安装包不完整：找不到 bundle\package.json" }
-foreach ($f in 'index.js','panel.js','panel.html','xlsx.js','mapping.js','client.js') {
+foreach ($f in 'index.js','panel.js','panel.html','client.js','run.js') {
   if (-not (Test-Path (Join-Path $srcDir $f))) { Die "安装包缺文件：bundle\src\$f" }
 }
 

@@ -6,24 +6,28 @@
  * 改规则/配额、审草稿、点发送都不用重启 DSH。
  */
 import { createServer } from 'node:http'
-import { existsSync, readFileSync, writeFileSync } from 'node:fs'
+import { readFileSync, writeFileSync, existsSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { readXlsx } from './xlsx.js'
-import { mapWorkbook } from './mapping.js'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
-const PAGE = readFileSync(join(HERE, 'panel.html'), 'utf8')
+const PAGE_PATH = join(HERE, 'panel.html')
+// 每次请求现读 panel.html：原来 import 时读一次，改一行 UI 就得重启整个宿主。
+const readPage = () => {
+  try { return readFileSync(PAGE_PATH, 'utf8') } catch { return '<h1>panel.html 缺失</h1>' }
+}
 
 export function startPanel(opts) {
   const {
     port = 18765,
     host = '127.0.0.1',
+    token = '',
     rulesPath,
     statePath,
     draftsPath,
     getStatus,
     run,
+    control,
     approve,
     skip,
   } = opts
@@ -67,23 +71,30 @@ export function startPanel(opts) {
     res.end(JSON.stringify(obj))
   }
 
+  // ---- 访问控制 ----
+  // 本机（回环）不受限，保持 DSH 右侧栏与本地浏览器照常可用；
+  // 从局域网 / Tailscale 进来的一律要求令牌，且不允许触发真实发送。
+  const remoteIp = (req) => String(req.socket?.remoteAddress || '').replace(/^::ffff:/, '')
+  const isLocal = (req) => remoteIp(req) === '127.0.0.1' || remoteIp(req) === '::1'
+  const cookieToken = (req) => {
+    const m = String(req.headers.cookie || '').match(/(?:^|;\s*)xhs_token=([^;]*)/)
+    return m ? decodeURIComponent(m[1]) : ''
+  }
+  const tokenOk = (req, url) => {
+    if (!token) return true
+    const q = url.searchParams.get('t') || ''
+    const h = String(req.headers['x-xhs-token'] || '')
+    return [q, h, cookieToken(req)].some((v) => v && v === token)
+  }
+  const UNAUTHORIZED_PAGE = '<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
+    + '<body style="background:#0f1115;color:#e6e8ee;font:15px/1.6 system-ui;padding:32px">'
+    + '<h2>需要访问令牌</h2><p style="color:#8b93a7">请在地址后面加上 <code>?t=你的令牌</code>，'
+    + '令牌在电脑的 <code>%USERPROFILE%\\.dsh\\xhs-agent\\panel-token.txt</code>。</p></body>'
+
   const readBody = (req) => new Promise((resolve, reject) => {
     let buf = ''
     req.on('data', (c) => { buf += c; if (buf.length > 1e6) reject(new Error('body too large')) })
     req.on('end', () => { try { resolve(buf ? JSON.parse(buf) : {}) } catch (e) { reject(e) } })
-    req.on('error', reject)
-  })
-
-  // Excel 是二进制，单独读原始字节
-  const readRaw = (req) => new Promise((resolve, reject) => {
-    const chunks = []
-    let size = 0
-    req.on('data', (c) => {
-      size += c.length
-      if (size > 8 * 1024 * 1024) { reject(new Error('文件超过 8MB')); req.destroy(); return }
-      chunks.push(c)
-    })
-    req.on('end', () => resolve(Buffer.concat(chunks)))
     req.on('error', reject)
   })
 
@@ -99,10 +110,29 @@ export function startPanel(opts) {
       }
 
       if (req.method === 'GET' && (url.pathname === '/' || url.pathname === '/index.html')) {
+        if (!isLocal(req)) {
+          if (!tokenOk(req, url)) {
+            res.writeHead(401, { 'content-type': 'text/html; charset=utf-8' })
+            res.end(UNAUTHORIZED_PAGE)
+            return
+          }
+          // 带 ?t= 首次进来 → 写 Cookie 再跳转，之后地址栏就不带令牌了
+          if (url.searchParams.get('t')) {
+            res.writeHead(302, {
+              location: '/',
+              'set-cookie': `xhs_token=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=2592000`,
+            })
+            res.end()
+            return
+          }
+        }
         res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
-        res.end(PAGE)
+        res.end(readPage())
         return
       }
+
+      // 所有 /api/*：非本机必须带令牌
+      if (!isLocal(req) && !tokenOk(req, url)) return json(res, 401, { ok: false, error: 'unauthorized' })
 
       if (req.method === 'GET' && url.pathname === '/api/state') {
         return json(res, 200, {
@@ -110,6 +140,7 @@ export function startPanel(opts) {
           rules: readJson(rulesPath, {}),
           rulesPath,
           drafts: readDrafts(),
+          local: isLocal(req),
         })
       }
 
@@ -137,29 +168,17 @@ export function startPanel(opts) {
         return json(res, 200, { ok: true, rules: next })
       }
 
-      // 导入客户填的 Excel：?apply=1 才写盘，否则只回预览
-      if (req.method === 'POST' && url.pathname === '/api/import') {
-        const buf = await readRaw(req)
-        if (!buf.length) return json(res, 400, { ok: false, error: '没有收到文件' })
-        let mapped
-        try {
-          mapped = mapWorkbook(readXlsx(buf))
-        } catch (e) {
-          return json(res, 400, { ok: false, error: `解析失败：${String(e?.message ?? e)}` })
-        }
-        const apply = url.searchParams.get('apply') === '1'
-        if (apply) writeFileSync(rulesPath, JSON.stringify(mapped.rules, null, 2))
-        return json(res, 200, {
-          ok: true,
-          applied: apply,
-          filled: Object.keys(mapped.fields).length,
-          missing: mapped.missing,
-          warnings: mapped.warnings,
-          rules: mapped.rules,
-        })
+      // 运行控制：pause / resume / stop
+      if (req.method === 'POST' && url.pathname === '/api/control') {
+        const body = await readBody(req)
+        return json(res, 200, await control(body?.action))
       }
 
       if (req.method === 'POST' && url.pathname === '/api/reply') {
+        // 发送强门禁的第二道：只允许本机点「发送这条」，手机/远程一律拒绝
+        if (!isLocal(req)) {
+          return json(res, 403, { ok: false, blocked: 'local_only', error: '真实发送只能在电脑上确认' })
+        }
         const body = await readBody(req)
         return json(res, 200, await approve(body))
       }
