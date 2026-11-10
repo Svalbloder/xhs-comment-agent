@@ -56,6 +56,13 @@ const DEFAULT_GLOBAL = {
   no_contact: true,
   no_price: true,
   banned_words: [],
+  // 评论内容黑名单：这条评论本身像同行 / 广告 / 引流，就不回它
+  skip_comment_words: [
+    '加微', '加v', '微信', '薇信', '威信', 'vx', 'v信', 'wx',
+    '私信', '私我', '私聊', '扣我', '滴滴我',
+    '代理', '加盟', '招代理', '刷单', '代购', '带货', '接单', '推广', '引流',
+    '货源', '批发', '厂家直销', '免费领', '优惠券', '看我主页', '点我头像',
+  ],
   // 营销号 / 机器人特征：昵称命中或评论命中正则，就直接跳过（不回复也不计候选）
   skip_author_words: ['打卡', '提醒', '机器人', '小助手', '客服', '福利号', '自动回复', '官方号', '运营号'],
   skip_content_patterns: [
@@ -110,6 +117,7 @@ export function validateScripts(raw) {
     errors.push('global.min_similarity_gap 必须在 0~1 之间')
   }
   if (!Array.isArray(g.banned_words)) errors.push('global.banned_words 必须是数组')
+  if (!Array.isArray(g.skip_comment_words)) errors.push('global.skip_comment_words 必须是数组')
   if (!Array.isArray(g.skip_author_words)) errors.push('global.skip_author_words 必须是数组')
   if (!Array.isArray(g.skip_content_patterns)) errors.push('global.skip_content_patterns 必须是数组')
 
@@ -245,6 +253,22 @@ export function checkReply(text, lib, recentTexts = []) {
   const dup = (recentTexts ?? []).find((r) => similarity(r, t) >= gap)
   if (dup) return { blocked: 'too_similar', detail: `与最近一条回复过于相似（${Math.round(similarity(dup, t) * 100)}%）` }
 
+  return null
+}
+
+/**
+ * 评论内容黑名单：评论里出现同行 / 广告 / 引流词就不回复。
+ * extraWords 用于把规则页老的 comment_gate.must_not 一起带上（向后兼容）。
+ * 返回 null 表示干净，否则返回命中的词。
+ */
+export function isBlacklistedComment(lib, text, extraWords = []) {
+  const g = { ...DEFAULT_GLOBAL, ...(lib?.global ?? {}) }
+  const t = normalize(text)
+  const words = [...(g.skip_comment_words ?? []), ...(extraWords ?? [])]
+  for (const w of words) {
+    const kw = normalize(w)
+    if (kw && t.includes(kw)) return { why: 'comment_word', hit: w }
+  }
   return null
 }
 

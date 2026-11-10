@@ -10,7 +10,7 @@
  *
  * token 用量来自 llm 流里的 { type:'usage' } chunk，是真实值，不做估算。
  */
-import { matchScene, pickTemplate, checkReply, styleSamples, isSkippableAuthor } from './scripts.js'
+import { matchScene, pickTemplate, checkReply, styleSamples, isSkippableAuthor, isBlacklistedComment } from './scripts.js'
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
@@ -238,16 +238,20 @@ export function createRunner(deps) {
         continue
       }
 
-      // 营销号 / 机器人先剔掉，别浪费配额和话术
+      // 同行 / 广告 / 营销号先剔掉，别浪费配额和话术
       let cands = pickComments(detail, rules)
       if (scriptsLib) {
-        const before = cands.length
+        let black = 0
+        let bot = 0
         cands = cands.filter((c) => {
-          const hit = isSkippableAuthor(scriptsLib, c.user, c.content)
-          return !hit
+          // 1) 评论内容含同行/广告/引流词 → 不回复
+          if (isBlacklistedComment(scriptsLib, c.content, rules.comment_gate?.must_not ?? [])) { black += 1; return false }
+          // 2) 昵称像营销号，或评论命中营销号句式
+          if (isSkippableAuthor(scriptsLib, c.user, c.content)) { bot += 1; return false }
+          return true
         })
-        const dropped = before - cands.length
-        if (dropped) patch({ skippedAuthor: (state.job?.skippedAuthor ?? 0) + dropped })
+        if (black) patch({ skippedBlacklist: (state.job?.skippedBlacklist ?? 0) + black })
+        if (bot) patch({ skippedAuthor: (state.job?.skippedAuthor ?? 0) + bot })
       }
       patch({ candidates: (state.job?.candidates ?? 0) + cands.length })
 
@@ -385,6 +389,7 @@ export function createRunner(deps) {
       sent: 0,
       skippedSeen: 0,
       skippedAuthor: 0,
+      skippedBlacklist: 0,
       skippedNoScene: 0,
       skippedRepeat: 0,
       skippedSceneQuota: 0,

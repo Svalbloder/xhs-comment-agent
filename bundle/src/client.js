@@ -464,6 +464,12 @@
               placeholder: '打卡',
               onChange: (v) => setScripts({ ...scripts, global: { ...(scripts.global || {}), skip_author_words: v } }),
             }),
+            h('label', { className: 'xhs-label' }, '评论黑名单（评论含这些词 = 同行 / 广告，不回复）'),
+            h(ChipField, {
+              value: (scripts.global && scripts.global.skip_comment_words) || [],
+              placeholder: '加微',
+              onChange: (v) => setScripts({ ...scripts, global: { ...(scripts.global || {}), skip_comment_words: v } }),
+            }),
           ) : null,
           ((scripts && scripts.scenes) || []).map((s, i) => h('div', {
             key: s.id,

@@ -168,6 +168,10 @@
         <label>作者黑名单（昵称含这些词 = 营销号，直接跳过）</label>
         <div class="tags" id="tags-skipauthor"></div>
       </div>
+      <div class="col">
+        <label>评论黑名单（评论含这些词 = 同行/广告，不回复）</label>
+        <div class="tags" id="tags-skipcomment"></div>
+      </div>
     </div>
     <div id="scriptsBox" style="margin-top:12px"></div>
     <details style="margin-top:12px">
@@ -206,9 +210,10 @@ const TAG_PH = {
   must_not: '输入黑名单词后回车，例如：加微',
   banned_words: '输入禁用词后回车，例如：微信',
   searchkw: '输入搜索词后回车，例如：大小脸',
-  skipauthor: '输入作者特征词后回车，例如：打卡'
+  skipauthor: '输入作者特征词后回车，例如：打卡',
+  skipcomment: '输入评论黑名单词后回车，例如：加微'
 }
-const TAGS = { must_any: [], must_not: [], banned_words: [], searchkw: [], skipauthor: [] }
+const TAGS = { must_any: [], must_not: [], banned_words: [], searchkw: [], skipauthor: [], skipcomment: [] }
 
 function renderTags(name){
   const box = $('tags-' + name)
@@ -516,8 +521,10 @@ async function loadScripts(){
     if(SCRIPTS){
       TAGS.searchkw = ((SCRIPTS.search && SCRIPTS.search.keywords) || []).slice()
       TAGS.skipauthor = ((SCRIPTS.global && SCRIPTS.global.skip_author_words) || []).slice()
+      TAGS.skipcomment = ((SCRIPTS.global && SCRIPTS.global.skip_comment_words) || []).slice()
       renderTags('searchkw')
       renderTags('skipauthor')
+      renderTags('skipcomment')
     }
     renderScripts(j.path)
   }catch(e){ $('scriptsMeta').textContent = '加载失败' }
@@ -588,7 +595,7 @@ function collectScripts(){
     })
   })
   lib.search = Object.assign({}, lib.search, { keywords: TAGS.searchkw.slice() })
-  lib.global = Object.assign({}, lib.global, { skip_author_words: TAGS.skipauthor.slice() })
+  lib.global = Object.assign({}, lib.global, { skip_author_words: TAGS.skipauthor.slice(), skip_comment_words: TAGS.skipcomment.slice() })
   return lib
 }
 
