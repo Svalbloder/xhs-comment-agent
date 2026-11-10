@@ -262,6 +262,11 @@ function applyInner(ctx, config = {}) {
     const rules = getRules()
     const rs = rules.reply_style ?? {}
 
+    // 0) 配额与去重：之前只有工具/面板路径调 guard()，自动发送这条线绕过了它，
+    //    导致可以连发、无视最小间隔和日限额。统一收到这里。
+    const blocked = guard(String(commentId))
+    if (blocked) return { ok: false, blocked }
+
     // 1) 禁用词：客户在 Excel 里填的，必须真的执行
     for (const w of rs.banned_words ?? []) {
       if (w && String(text).includes(w)) {
@@ -269,8 +274,9 @@ function applyInner(ctx, config = {}) {
       }
     }
 
-    // 2) 字数
-    const maxChars = rs.max_chars ?? 60
+    // 2) 字数：话术库启用时以话术库的 max_chars 为准（否则模板 120 字会被这里按 60 拦掉）
+    const lib = (() => { try { return getScripts() } catch { return null } })()
+    const maxChars = Number(lib?.global?.max_chars ?? rs.max_chars ?? 60)
     if (String(text).length > maxChars) {
       return { ok: false, blocked: 'too_long', limit: maxChars, length: String(text).length }
     }
