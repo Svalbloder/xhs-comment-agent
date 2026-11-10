@@ -102,8 +102,6 @@
   <div class="card">
     <div class="row">
       <div class="col">
-        <label>搜索语句 / 关键词（回车添加一个；最多生效前 3 个）</label>
-        <div class="tags" id="tags-keywords"></div>
         <label>评论必须包含任一（空 = 不筛）</label>
         <div class="tags" id="tags-must_any"></div>
         <label>评论必须不含（黑名单）</label>
@@ -159,6 +157,16 @@
       一条评论先按「触发词」归到某个场景，再从该场景的话术里挑一条；同一句话不会重复用。
       发送前统一过合规闸：字数、禁用词、联系方式、报价、与最近回复的相似度。
     </div>
+    <div class="row" style="margin-top:12px">
+      <div class="col">
+        <label>搜索关键词（就搜这些词，最多生效前 3 个）</label>
+        <div class="tags" id="tags-searchkw"></div>
+      </div>
+      <div class="col">
+        <label>作者黑名单（昵称含这些词 = 营销号，直接跳过）</label>
+        <div class="tags" id="tags-skipauthor"></div>
+      </div>
+    </div>
     <div id="scriptsBox" style="margin-top:12px"></div>
     <details style="margin-top:12px">
       <summary class="hint" style="cursor:pointer">粘贴 JSON 覆盖（产品方更新话术时用）</summary>
@@ -190,12 +198,13 @@ function toast(msg){ const t=$('toast'); t.textContent=msg; t.classList.add('sho
 
 /* ---------- 标签式输入：回车/点「添加」生成一个标签，点 × 删除 ---------- */
 const TAG_PH = {
-  keywords: '输入关键词后回车，例如：上海 露营 免费营地',
   must_any: '输入必含词后回车，例如：多少钱',
   must_not: '输入黑名单词后回车，例如：加微',
-  banned_words: '输入禁用词后回车，例如：微信'
+  banned_words: '输入禁用词后回车，例如：微信',
+  searchkw: '输入搜索词后回车，例如：大小脸',
+  skipauthor: '输入作者特征词后回车，例如：打卡'
 }
-const TAGS = { keywords: [], must_any: [], must_not: [], banned_words: [] }
+const TAGS = { must_any: [], must_not: [], banned_words: [], searchkw: [], skipauthor: [] }
 
 function renderTags(name){
   const box = $('tags-' + name)
@@ -274,7 +283,6 @@ async function load(){
   if(tagsBeingEdited()){
     // 正在输入标签时不要被 15s 轮询覆盖
   } else {
-    syncTags('keywords', r0.keywords)
     syncTags('must_any', cg.must_any)
     syncTags('must_not', cg.must_not)
     syncTags('banned_words', rs.banned_words)
@@ -295,7 +303,6 @@ async function load(){
 
 async function saveRules(){
   const body = {
-    keywords: TAGS.keywords.slice(),
     comment_gate: { level:[1,2], must_any: TAGS.must_any.slice(), must_not: TAGS.must_not.slice(), max_len: +$('max_len').value || 120 },
     reply_policy: { max_per_note:+$('max_per_note').value||2, hourly_quota:+$('hourly_quota').value||5, daily_quota:+$('daily_quota').value||20, min_interval_sec:+$('min_interval_sec').value||45, cycle_interval_sec:+$('cycle_interval_sec').value||60, max_notes_per_cycle:+$('max_notes_per_cycle').value||6 },
     reply_style: { max_chars:+$('max_chars').value||60, banned_words: TAGS.banned_words.slice() },
@@ -444,6 +451,12 @@ async function loadScripts(){
     const r = await fetch('/api/scripts')
     const j = await r.json()
     SCRIPTS = j.scripts
+    if(SCRIPTS){
+      TAGS.searchkw = ((SCRIPTS.search && SCRIPTS.search.keywords) || []).slice()
+      TAGS.skipauthor = ((SCRIPTS.global && SCRIPTS.global.skip_author_words) || []).slice()
+      renderTags('searchkw')
+      renderTags('skipauthor')
+    }
     renderScripts(j.path)
   }catch(e){ $('scriptsMeta').textContent = '加载失败' }
 }
@@ -501,6 +514,8 @@ function collectScripts(){
       templates: tplRaw.split('\n').map(function(x){ return x.trim() }).filter(Boolean)
     })
   })
+  lib.search = Object.assign({}, lib.search, { keywords: TAGS.searchkw.slice() })
+  lib.global = Object.assign({}, lib.global, { skip_author_words: TAGS.skipauthor.slice() })
   return lib
 }
 

@@ -107,6 +107,12 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\deploy\sync.ps1 -DryRun  #
 → 合规闸 → 草稿
 ```
 
+**搜索词与营销号过滤**也在话术库里：
+
+- search.keywords：搜索用哪些词（最多生效前 3 个）。规则页不再单独配关键词，一处搞定。
+- global.skip_author_words：评论者昵称含这些词（打卡/提醒/机器人/客服…）直接跳过，不占配额
+- global.skip_content_patterns：评论内容命中正则（如「每晚 22:00 提醒」）也跳过
+
 **合规闸**（发送前强制执行，命中即拦并说明原因）：
 
 | 检查 | 说明 |

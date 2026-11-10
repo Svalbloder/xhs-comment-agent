@@ -56,6 +56,13 @@ const DEFAULT_GLOBAL = {
   no_contact: true,
   no_price: true,
   banned_words: [],
+  // 营销号 / 机器人特征：昵称命中或评论命中正则，就直接跳过（不回复也不计候选）
+  skip_author_words: ['打卡', '提醒', '机器人', '小助手', '客服', '福利号', '自动回复', '官方号', '运营号'],
+  skip_content_patterns: [
+    '每晚\\d{1,2}[:：]?\\d{0,2}.*提醒',
+    '定时.*提醒',
+    '自动回复',
+  ],
 }
 
 const MODES = new Set(['template', 'hybrid', 'llm'])
@@ -72,6 +79,12 @@ export function validateScripts(raw) {
     updated_at: raw?.updated_at ?? '',
     source: raw?.source ?? '',
     global: { ...DEFAULT_GLOBAL, ...(raw?.global ?? {}) },
+    search: {
+      keywords: Array.isArray(raw?.search?.keywords) ? raw.search.keywords.map(String).filter(Boolean) : [],
+      sort_by: raw?.search?.sort_by ?? '综合',
+      note_type: raw?.search?.note_type ?? '不限',
+      publish_time: raw?.search?.publish_time ?? '不限',
+    },
     fallback: {
       enabled: raw?.fallback?.enabled === true,
       mode: MODES.has(raw?.fallback?.mode) ? raw.fallback.mode : 'llm',
@@ -93,6 +106,8 @@ export function validateScripts(raw) {
     errors.push('global.min_similarity_gap 必须在 0~1 之间')
   }
   if (!Array.isArray(g.banned_words)) errors.push('global.banned_words 必须是数组')
+  if (!Array.isArray(g.skip_author_words)) errors.push('global.skip_author_words 必须是数组')
+  if (!Array.isArray(g.skip_content_patterns)) errors.push('global.skip_content_patterns 必须是数组')
 
   const ids = new Set()
   for (const [i, s] of raw.scenes.entries()) {
@@ -225,6 +240,32 @@ export function checkReply(text, lib, recentTexts = []) {
   const gap = Number(g.min_similarity_gap ?? 0.82)
   const dup = (recentTexts ?? []).find((r) => similarity(r, t) >= gap)
   if (dup) return { blocked: 'too_similar', detail: `与最近一条回复过于相似（${Math.round(similarity(dup, t) * 100)}%）` }
+
+  return null
+}
+
+/**
+ * 营销号 / 机器人过滤：昵称命中特征词，或评论命中特征正则，就跳过这条评论。
+ * 返回 null 表示正常，否则返回命中原因。
+ */
+export function isSkippableAuthor(lib, user, content) {
+  const g = { ...DEFAULT_GLOBAL, ...(lib?.global ?? {}) }
+  const name = normalize(user)
+  const text = normalize(content)
+
+  if (name) {
+    for (const w of g.skip_author_words ?? []) {
+      const kw = normalize(w)
+      if (kw && name.includes(kw)) return { why: 'author', hit: w }
+    }
+  }
+
+  for (const p of g.skip_content_patterns ?? []) {
+    if (!p) continue
+    try {
+      if (new RegExp(p).test(text)) return { why: 'content', hit: p }
+    } catch { /* 非法正则忽略 */ }
+  }
 
   return null
 }

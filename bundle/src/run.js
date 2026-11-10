@@ -10,7 +10,7 @@
  *
  * token 用量来自 llm 流里的 { type:'usage' } chunk，是真实值，不做估算。
  */
-import { matchScene, pickTemplate, checkReply, styleSamples } from './scripts.js'
+import { matchScene, pickTemplate, checkReply, styleSamples, isSkippableAuthor } from './scripts.js'
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
@@ -182,8 +182,10 @@ export function createRunner(deps) {
   async function runCycle(cycleNo) {
     const rules = getRules()
     const scriptsLib = readScripts()
-    const keywords = (rules.keywords ?? []).filter(Boolean).slice(0, 3)
-    if (!keywords.length) throw new Error('先在「规则」里填搜索关键词')
+    // 搜索词优先取话术库（一处配置全搞定）；没配才回退到规则页
+    const libKeywords = (scriptsLib?.search?.keywords ?? []).filter(Boolean)
+    const keywords = (libKeywords.length ? libKeywords : (rules.keywords ?? [])).filter(Boolean).slice(0, 3)
+    if (!keywords.length) throw new Error('先在「话术库」里填搜索关键词')
 
     patch({ phase: 'searching', current: { action: 'searching', keyword: null, cycle: cycleNo } })
 
@@ -236,7 +238,17 @@ export function createRunner(deps) {
         continue
       }
 
-      const cands = pickComments(detail, rules)
+      // 营销号 / 机器人先剔掉，别浪费配额和话术
+      let cands = pickComments(detail, rules)
+      if (scriptsLib) {
+        const before = cands.length
+        cands = cands.filter((c) => {
+          const hit = isSkippableAuthor(scriptsLib, c.user, c.content)
+          return !hit
+        })
+        const dropped = before - cands.length
+        if (dropped) patch({ skippedAuthor: (state.job?.skippedAuthor ?? 0) + dropped })
+      }
       patch({ candidates: (state.job?.candidates ?? 0) + cands.length })
 
       let used = 0
@@ -372,6 +384,7 @@ export function createRunner(deps) {
       drafted: 0,
       sent: 0,
       skippedSeen: 0,
+      skippedAuthor: 0,
       skippedNoScene: 0,
       skippedRepeat: 0,
       skippedSceneQuota: 0,

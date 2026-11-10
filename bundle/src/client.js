@@ -374,6 +374,20 @@
           scriptsMsg ? h('div', { className: 'xhs-mut', style: { marginTop: 6 } }, scriptsMsg) : null,
           h('div', { className: 'xhs-mut', style: { marginTop: 6 } },
             '一条评论先按触发词归场景，再从该场景话术里挑一条；同一句不会重复用。发送前统一过合规闸。'),
+          scripts ? h('div', null,
+            h('label', { className: 'xhs-label' }, '搜索关键词（就搜这些词，最多前 3 个）'),
+            h(ChipField, {
+              value: (scripts.search && scripts.search.keywords) || [],
+              placeholder: '大小脸',
+              onChange: (v) => setScripts({ ...scripts, search: { ...(scripts.search || {}), keywords: v } }),
+            }),
+            h('label', { className: 'xhs-label' }, '作者黑名单（昵称含这些词 = 营销号，直接跳过）'),
+            h(ChipField, {
+              value: (scripts.global && scripts.global.skip_author_words) || [],
+              placeholder: '打卡',
+              onChange: (v) => setScripts({ ...scripts, global: { ...(scripts.global || {}), skip_author_words: v } }),
+            }),
+          ) : null,
           ((scripts && scripts.scenes) || []).map((s, i) => h('div', {
             key: s.id,
             style: { marginTop: 12, paddingTop: 10, borderTop: '1px solid rgba(127,127,127,.25)' },
@@ -402,8 +416,6 @@
         ) : null,
 
         tab === 'rules' ? h('div', { className: 'xhs-card' },
-          h('label', { className: 'xhs-label' }, '搜索语句 / 关键词（回车添加；最多生效前 3 个）'),
-          h(ChipField, { value: form.keywords, placeholder: '上海 露营 免费营地', onChange: (v) => setForm({ ...form, keywords: v }) }),
           h('label', { className: 'xhs-label' }, '评论必须包含其一（空 = 不筛）'),
           h(ChipField, { value: form.must_any, placeholder: '多少钱', onChange: (v) => setForm({ ...form, must_any: v }) }),
           h('label', { className: 'xhs-label' }, '评论不能包含（黑名单）'),
