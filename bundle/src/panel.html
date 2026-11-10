@@ -172,6 +172,10 @@
         <label>评论黑名单（评论含这些词 = 同行/广告，不回复）</label>
         <div class="tags" id="tags-skipcomment"></div>
       </div>
+      <div class="col">
+        <label>屏蔽 IP 属地（笔记属地命中就不回，如：江苏）</label>
+        <div class="tags" id="tags-blockip"></div>
+      </div>
     </div>
     <div id="scriptsBox" style="margin-top:12px"></div>
     <details style="margin-top:12px">
@@ -211,9 +215,10 @@ const TAG_PH = {
   banned_words: '输入禁用词后回车，例如：微信',
   searchkw: '输入搜索词后回车，例如：大小脸',
   skipauthor: '输入作者特征词后回车，例如：打卡',
-  skipcomment: '输入评论黑名单词后回车，例如：加微'
+  skipcomment: '输入评论黑名单词后回车，例如：加微',
+  blockip: '输入要屏蔽的 IP 属地后回车，例如：江苏'
 }
-const TAGS = { must_any: [], must_not: [], banned_words: [], searchkw: [], skipauthor: [], skipcomment: [] }
+const TAGS = { must_any: [], must_not: [], banned_words: [], searchkw: [], skipauthor: [], skipcomment: [], blockip: [] }
 
 function renderTags(name){
   const box = $('tags-' + name)
@@ -536,9 +541,11 @@ async function loadScripts(){
       TAGS.searchkw = ((SCRIPTS.search && SCRIPTS.search.keywords) || []).slice()
       TAGS.skipauthor = ((SCRIPTS.global && SCRIPTS.global.skip_author_words) || []).slice()
       TAGS.skipcomment = ((SCRIPTS.global && SCRIPTS.global.skip_comment_words) || []).slice()
+      TAGS.blockip = ((SCRIPTS.global && SCRIPTS.global.block_ip_locations) || []).slice()
       renderTags('searchkw')
       renderTags('skipauthor')
       renderTags('skipcomment')
+      renderTags('blockip')
     }
     renderScripts(j.path)
   }catch(e){ $('scriptsMeta').textContent = '加载失败' }
@@ -609,7 +616,7 @@ function collectScripts(){
     })
   })
   lib.search = Object.assign({}, lib.search, { keywords: TAGS.searchkw.slice() })
-  lib.global = Object.assign({}, lib.global, { skip_author_words: TAGS.skipauthor.slice(), skip_comment_words: TAGS.skipcomment.slice() })
+  lib.global = Object.assign({}, lib.global, { skip_author_words: TAGS.skipauthor.slice(), skip_comment_words: TAGS.skipcomment.slice(), block_ip_locations: TAGS.blockip.slice() })
   return lib
 }
 

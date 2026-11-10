@@ -56,6 +56,8 @@ const DEFAULT_GLOBAL = {
   no_contact: true,
   no_price: true,
   banned_words: [],
+  // 屏蔽的笔记 IP 属地（如 江苏）：命中就不抓评论、不回复
+  block_ip_locations: [],
   // 评论内容黑名单：这条评论本身像同行 / 广告 / 引流，就不回它
   skip_comment_words: [
     '加微', '加v', '微信', '薇信', '威信', 'vx', 'v信', 'wx',
@@ -117,6 +119,7 @@ export function validateScripts(raw) {
     errors.push('global.min_similarity_gap 必须在 0~1 之间')
   }
   if (!Array.isArray(g.banned_words)) errors.push('global.banned_words 必须是数组')
+  if (!Array.isArray(g.block_ip_locations)) errors.push('global.block_ip_locations 必须是数组')
   if (!Array.isArray(g.skip_comment_words)) errors.push('global.skip_comment_words 必须是数组')
   if (!Array.isArray(g.skip_author_words)) errors.push('global.skip_author_words 必须是数组')
   if (!Array.isArray(g.skip_content_patterns)) errors.push('global.skip_content_patterns 必须是数组')
@@ -270,6 +273,18 @@ export function isBlacklistedComment(lib, text, extraWords = []) {
     if (kw && t.includes(kw)) return { why: 'comment_word', hit: w }
   }
   return null
+}
+
+/**
+ * IP 属地过滤：笔记的 ipLocation 命中屏蔽列表就不回。
+ * ipLocation 为空（平台没给）时不算命中，避免误杀。
+ */
+export function isBlockedIp(lib, ipLocation) {
+  const list = (lib?.global?.block_ip_locations ?? []).map((x) => normalize(x)).filter(Boolean)
+  const v = normalize(ipLocation)
+  if (!v || !list.length) return null
+  const hit = list.find((b) => v.includes(b))
+  return hit ? { why: 'ip', hit } : null
 }
 
 /**

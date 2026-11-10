@@ -484,6 +484,12 @@
               placeholder: '加微',
               onChange: (v) => setScripts({ ...scripts, global: { ...(scripts.global || {}), skip_comment_words: v } }),
             }),
+            h('label', { className: 'xhs-label' }, '屏蔽 IP 属地（笔记属地命中就不回）'),
+            h(ChipField, {
+              value: (scripts.global && scripts.global.block_ip_locations) || [],
+              placeholder: '江苏',
+              onChange: (v) => setScripts({ ...scripts, global: { ...(scripts.global || {}), block_ip_locations: v } }),
+            }),
           ) : null,
           ((scripts && scripts.scenes) || []).map((s, i) => h('div', {
             key: s.id,

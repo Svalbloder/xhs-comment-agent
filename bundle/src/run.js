@@ -10,7 +10,7 @@
  *
  * token 用量来自 llm 流里的 { type:'usage' } chunk，是真实值，不做估算。
  */
-import { matchScene, pickTemplate, checkReply, styleSamples, isSkippableAuthor, isBlacklistedComment } from './scripts.js'
+import { matchScene, pickTemplate, checkReply, styleSamples, isSkippableAuthor, isBlacklistedComment, isBlockedIp } from './scripts.js'
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
@@ -238,6 +238,20 @@ export function createRunner(deps) {
         continue
       }
 
+      // IP 属地过滤：搜索结果里没有 ipLocation，只有详情里有，所以放在这里判。
+      // 命中就整篇跳过（不取评论、不生成）；ipLocation 为空表示平台没给，按不屏蔽处理。
+      const ipLocation = String(detail?.data?.note?.ipLocation ?? detail?.note?.ipLocation ?? '').trim()
+      const ipHit = scriptsLib ? isBlockedIp(scriptsLib, ipLocation) : null
+      if (ipHit) {
+        patch({
+          skippedIp: (state.job?.skippedIp ?? 0) + 1,
+          cycleDone: (state.job?.cycleDone ?? 0) + 1,
+          notesDone: (state.job?.notesDone ?? 0) + 1,
+        })
+        log(`skip note by ip: ${ipLocation} «${String(note.title).slice(0, 20)}»`)
+        continue
+      }
+
       // 同行 / 广告 / 营销号先剔掉，别浪费配额和话术
       let cands = pickComments(detail, rules)
       if (scriptsLib) {
@@ -390,6 +404,7 @@ export function createRunner(deps) {
       skippedSeen: 0,
       skippedAuthor: 0,
       skippedBlacklist: 0,
+      skippedIp: 0,
       skippedNoScene: 0,
       skippedRepeat: 0,
       skippedSceneQuota: 0,
