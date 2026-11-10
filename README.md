@@ -56,6 +56,19 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\deploy\install.ps1 -SkipDo
 失败自动回滚；所有文本文件都以 **UTF-8 无 BOM** 写入（BOM 会让 DSH 宿主启动崩溃，
 见 [docs/INCIDENT-2026-11-03-bom-crash.md](docs/INCIDENT-2026-11-03-bom-crash.md)）。
 
+### 方式三：改完代码，同步到本地插件
+
+在仓库里改完 `bundle/src` 后，不用重跑安装器：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\deploy\sync.ps1          # 同步
+powershell -NoProfile -ExecutionPolicy Bypass -File .\deploy\sync.ps1 -DryRun  # 只看会改什么
+```
+
+它只复制 `bundle/src\*` 与 `bundle/package.json`，顺手删掉插件目录里仓库已不存在的残留文件，
+再做哈希比对与 BOM 校验；**不碰** `rules.json` / `drafts.jsonl` / `cookies.json`。
+同步完需要重启一次 DSH（托盘右键 → 退出 → 打开）才会加载新代码。
+
 ---
 
 ## 装了之后有什么
