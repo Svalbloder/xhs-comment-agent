@@ -28,6 +28,7 @@ export function startPanel(opts) {
     scriptsPath,
     getScripts,
     saveScripts,
+    openLoginWindow,
     getStatus,
     run,
     control,
@@ -147,6 +148,13 @@ export function startPanel(opts) {
         })
       }
 
+      // 点「未登录」→ 拉起有头登录窗口（扫码 / 换号），关窗后宿主会自动重启 sidecar
+      if (req.method === 'POST' && url.pathname === '/api/login/window') {
+        if (!isLocal(req)) {
+          return json(res, 403, { ok: false, blocked: 'local_only', error: '登录窗口只能在电脑上打开' })
+        }
+        return json(res, 200, await openLoginWindow())
+      }
       // 话术库：读 / 存。改话术属于高风险（直接决定发出去的话），只允许本机
       if (req.method === 'GET' && url.pathname === '/api/scripts') {
         return json(res, 200, { ok: true, scripts: getScripts ? getScripts() : null, path: scriptsPath })

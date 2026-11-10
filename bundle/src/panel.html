@@ -24,6 +24,7 @@
   .pill{display:inline-block;padding:2px 8px;border-radius:999px;background:#232833;color:var(--mut);font-size:12px;margin:0 6px 6px 0}
   .pill.ok{background:rgba(47,191,113,.15);color:var(--ok)}
   .pill.bad{background:rgba(255,46,77,.15);color:var(--acc)}
+  button.pill{border:0;font:inherit;padding:2px 8px;border-radius:999px}
   .draft{border-top:1px solid var(--line);padding:12px 0}
   .draft:first-child{border-top:0}
   .meta{color:var(--mut);font-size:12px}
@@ -250,7 +251,9 @@ function renderStatus(st){
   const logged = st.login && st.login.is_logged_in
   $('status').innerHTML =
     '<span class="pill '+(st.healthy?'ok':'bad')+'">服务 '+(st.healthy?'在线':'离线')+'</span>' +
-    '<span class="pill '+(logged?'ok':'bad')+'">'+(logged?('已登录 · '+esc(st.login.username||'')):'未登录')+'</span>' +
+    (logged
+      ? '<span class="pill ok">已登录 · '+esc(st.login.username||'')+'</span>'
+      : '<button class="pill bad" onclick="openLogin()" style="cursor:pointer" title="打开小红书登录窗口，扫码或换账号">未登录 · 点这里扫码</button>') +
     '<span class="pill">今日 '+st.quota.dayCount+'/'+st.quota.daily_quota+'</span>' +
     '<span class="pill">本小时 '+st.quota.hourCount+'/'+st.quota.hourly_quota+'</span>' +
     '<span class="pill">已发送 '+st.sentTotal+'</span>' +
@@ -548,6 +551,35 @@ async function importScriptsJson(){
   renderScripts()
   $('scriptsJson').value = ''
   toast('已导入并备份旧版本')
+}
+
+/* ---------- 登录窗口 ---------- */
+async function openLogin(){
+  toast('正在打开登录窗口…')
+  let j
+  try {
+    const r = await fetch('/api/login/window', { method: 'POST' })
+    j = await r.json()
+  } catch(e){ toast('打开失败：' + e.message); return }
+
+  if(!j.ok){ toast(j.error || j.blocked || '打开失败'); return }
+  toast(j.already ? '登录窗口已经开着，去那个窗口操作' : '已打开登录窗口：扫码后关掉窗口即可')
+
+  // 登录成功后状态条会自动变绿，这里只负责提示
+  let n = 0
+  const timer = setInterval(async function(){
+    n += 1
+    try {
+      const s = await (await fetch('/api/state')).json()
+      const lg = s && s.status && s.status.login
+      if(lg && lg.is_logged_in){
+        clearInterval(timer)
+        toast('登录成功：' + (lg.username || ''))
+        load()
+      }
+    } catch(e){ /* 忽略 */ }
+    if(n > 100) clearInterval(timer)
+  }, 3000)
 }
 
 load(); setInterval(load, 15000); setInterval(poll, 2500); loadScripts()

@@ -18,6 +18,7 @@
   .xhs-chip{display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:999px;border:1px solid currentColor;opacity:.75;font-size:12px}
   .xhs-chip.ok{color:#2fbf71;border-color:#2fbf71;opacity:1}
   .xhs-chip.bad{color:#ff4d67;border-color:#ff4d67;opacity:1}
+  .xhs-chip-btn{cursor:pointer;background:transparent;font:inherit}
   .xhs-card{border:1px solid rgba(127,127,127,.25);border-radius:10px;padding:10px}
   .xhs-label{display:block;font-size:11px;opacity:.65;margin:8px 0 4px}
   .xhs-input,.xhs-area{width:100%;box-sizing:border-box;background:transparent;color:inherit;border:1px solid rgba(127,127,127,.35);border-radius:8px;padding:6px 8px;font:inherit}
@@ -237,6 +238,14 @@
         save(next)
       }
 
+      const openLogin = async () => {
+        const r = await api('/api/login/window', { method: 'POST' })
+        setMsg(r && r.ok
+          ? (r.already ? '登录窗口已经开着，去那个窗口操作' : '已打开登录窗口：扫码后关掉窗口即可')
+          : ('打开失败：' + ((r && (r.error || r.blocked)) || '')))
+        setTimeout(() => setMsg(''), 6000)
+      }
+
       const runNow = async (mode) => {
         const r = await api('/api/run', {
           method: 'POST',
@@ -302,7 +311,13 @@
       return h('div', { className: 'xhs-pane' },
         h('div', { className: 'xhs-row' },
           h('span', { className: 'xhs-chip ' + (st.healthy ? 'ok' : 'bad') }, st.healthy ? '服务在线' : '服务离线'),
-          h('span', { className: 'xhs-chip ' + (logged ? 'ok' : 'bad') }, logged ? ('已登录 · ' + (st.login.username || '')) : '未登录'),
+          logged
+            ? h('span', { className: 'xhs-chip ok' }, '已登录 · ' + (st.login.username || ''))
+            : h('button', {
+              className: 'xhs-chip bad xhs-chip-btn',
+              title: '打开小红书登录窗口，扫码或换账号',
+              onClick: openLogin,
+            }, '未登录 · 点这里扫码'),
           h('span', { className: 'xhs-chip' }, '今日 ' + st.quota.dayCount + '/' + st.quota.daily_quota),
           h('span', { className: 'xhs-chip' }, '本小时 ' + st.quota.hourCount + '/' + st.quota.hourly_quota),
         ),

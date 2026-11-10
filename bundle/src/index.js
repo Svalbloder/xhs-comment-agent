@@ -11,7 +11,7 @@
  */
 import { spawn } from 'node:child_process'
 import { createHash, randomBytes } from 'node:crypto'
-import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -215,6 +215,43 @@ function applyInner(ctx, config = {}) {
 
   let child = null
   let starting = null
+  let loginProc = null
+
+  // 登录窗口：直接拉起 xiaohongshu-login.exe（有头 Chromium），扫码/换号都在里面完成
+  const loginExe = expand(config.loginBinaryPath ?? join(homedir(), '.dsh', 'runtimes', 'xiaohongshu-login.exe'))
+  const cookiesFile = join(workDir, 'cookies.json')
+  const cookieMtime = () => { try { return statSync(cookiesFile).mtimeMs } catch { return 0 } }
+
+  const openLoginWindow = () => {
+    if (loginProc && loginProc.exitCode === null) {
+      return { ok: true, already: true, hint: '登录窗口已经开着，去那个窗口操作' }
+    }
+    if (!existsSync(loginExe)) {
+      return { ok: false, error: `找不到登录程序：${loginExe}（重跑 deploy\\install.ps1 会补下载）` }
+    }
+    const before = cookieMtime()
+    try {
+      loginProc = spawn(loginExe, [], { cwd: workDir, stdio: 'ignore', windowsHide: false })
+    } catch (e) {
+      return { ok: false, error: `启动登录窗口失败：${e?.message ?? e}` }
+    }
+    log(`login window opened: ${loginExe}`)
+    loginProc.on('exit', async (code) => {
+      loginProc = null
+      const changed = cookieMtime() > before
+      log(`login window closed code=${code} cookiesChanged=${changed}`)
+      // 关窗后重启 sidecar，让它重新读 cookies.json（否则仍是旧会话）
+      try {
+        if (child && !child.killed) child.kill()
+      } catch { /* ignore */ }
+      child = null
+      starting = null
+      if (changed) {
+        try { await ensureService() } catch { /* 下次调用还会重试 */ }
+      }
+    })
+    return { ok: true, started: true, exe: loginExe }
+  }
 
   const ping = async () => {
     try {
@@ -251,14 +288,15 @@ function applyInner(ctx, config = {}) {
     }
   }
 
-  const api = async (path, body) => {
+  // opts.timeoutMs：登录态检查这类"卡住就卡住"的调用要短超时，不能把整个 /api/state 拖死
+  const api = async (path, body, opts = {}) => {
     const ready = await ensureService()
     if (!ready.ok) throw new Error(`xhs service unavailable: ${ready.reason}`)
     const res = await fetch(`${apiBase}${path}`, {
       method: body === undefined ? 'GET' : 'POST',
       headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}) },
       body: body === undefined ? undefined : JSON.stringify(body),
-      signal: AbortSignal.timeout(Number(config.requestTimeoutMs ?? 600000)),
+      signal: AbortSignal.timeout(Number(opts.timeoutMs ?? config.requestTimeoutMs ?? 600000)),
     })
     const text = await res.text()
     let json = null
@@ -380,7 +418,7 @@ function applyInner(ctx, config = {}) {
       const healthy = ready.ok
       let login = null
       if (healthy) {
-        try { login = await api('/login/status') } catch (e) { login = { error: String(e?.message ?? e) } }
+        try { login = await api('/login/status', undefined, { timeoutMs: 8000 }) } catch (e) { login = { error: String(e?.message ?? e) } }
       }
       refreshCounters()
       const r = getRules()
@@ -728,11 +766,12 @@ function applyInner(ctx, config = {}) {
         scriptsPath,
         getScripts: () => getScripts(),
         saveScripts: (raw) => saveScripts(raw),
+        openLoginWindow: () => openLoginWindow(),
         getStatus: async () => {
           const ready = await ensureService()
           let login = null
           if (ready.ok) {
-            try { login = await api('/login/status') } catch (e) { login = { error: String(e?.message ?? e) } }
+            try { login = await api('/login/status', undefined, { timeoutMs: 8000 }) } catch (e) { login = { error: String(e?.message ?? e) } }
           }
           refreshCounters()
           const r = getRules()
@@ -740,6 +779,10 @@ function applyInner(ctx, config = {}) {
             healthy: ready.ok,
             reason: ready.reason ?? null,
             login,
+            loginWindow: {
+              available: existsSync(loginExe),
+              open: !!(loginProc && loginProc.exitCode === null),
+            },
             dryRun: effDryRun(),
             requireApproval: requireApproval(),
             job: state.job ?? null,
