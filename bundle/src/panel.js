@@ -6,9 +6,15 @@
  * 改规则/配额、审草稿、点发送都不用重启 DSH。
  */
 import { createServer } from 'node:http'
+import { spawn } from 'node:child_process'
 import { readFileSync, writeFileSync, existsSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+
+// 小红书笔记页地址：带 xsec_token 才能打开（否则会提示笔记不存在）
+const noteUrl = (feedId, token) =>
+  `https://www.xiaohongshu.com/explore/${encodeURIComponent(feedId)}` +
+  (token ? `?xsec_token=${encodeURIComponent(token)}&xsec_source=pc_search` : '')
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const PAGE_PATH = join(HERE, 'panel.html')
@@ -191,6 +197,26 @@ export function startPanel(opts) {
         }
         writeFileSync(rulesPath, JSON.stringify(next, null, 2))
         return json(res, 200, { ok: true, rules: next })
+      }
+
+      // 打开笔记：用系统默认浏览器打开小红书原帖（附带 xsec_token 才能看）
+      if (req.method === 'POST' && url.pathname === '/api/open-note') {
+        if (!isLocal(req)) {
+          return json(res, 403, { ok: false, blocked: 'local_only', error: '打开笔记只能在电脑上操作' })
+        }
+        const body = await readBody(req)
+        const feedId = String(body?.feedId || '')
+        if (!/^[0-9a-f]{24}$/i.test(feedId)) {
+          return json(res, 400, { ok: false, error: 'feedId 不合法' })
+        }
+        const target = noteUrl(feedId, String(body?.xsecToken || ''))
+        try {
+          const p = spawn('cmd.exe', ['/c', 'start', '', target], { windowsHide: true, detached: true, stdio: 'ignore' })
+          p.unref()
+        } catch (e) {
+          return json(res, 500, { ok: false, error: `打开失败：${e?.message ?? e}`, url: target })
+        }
+        return json(res, 200, { ok: true, url: target })
       }
 
       // 清空回复清单：只清 drafts.jsonl，不动已发送记录 / 去重记录 / 话术库

@@ -19,6 +19,8 @@
   .xhs-chip.ok{color:#2fbf71;border-color:#2fbf71;opacity:1}
   .xhs-chip.bad{color:#ff4d67;border-color:#ff4d67;opacity:1}
   .xhs-chip-btn{cursor:pointer;background:transparent;font:inherit}
+  .xhs-link{display:block;width:100%;text-align:left;background:transparent;border:0;color:#7fb3d5;font:inherit;font-size:12px;padding:2px 0 4px;cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .xhs-link:hover{text-decoration:underline}
   .xhs-card{border:1px solid rgba(127,127,127,.25);border-radius:10px;padding:10px}
   .xhs-label{display:block;font-size:11px;opacity:.65;margin:8px 0 4px}
   .xhs-input,.xhs-area{width:100%;box-sizing:border-box;background:transparent;color:inherit;border:1px solid rgba(127,127,127,.35);border-radius:8px;padding:6px 8px;font:inherit}
@@ -364,6 +366,18 @@
         setTimeout(() => setMsg(''), 3000)
       }
 
+      const openNote = async (d) => {
+        const r = await api('/api/open-note', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ feedId: d.feedId, xsecToken: d.xsecToken }),
+        })
+        if (!r || !r.ok) {
+          setMsg('打开笔记失败：' + ((r && (r.error || r.blocked)) || ''))
+          setTimeout(() => setMsg(''), 3000)
+        }
+      }
+
       if (!state || !form) return h('div', { className: 'xhs-pane' }, h('div', { className: 'xhs-mut' }, '连接面板中…（首次启动需要几秒）'))
 
       const st = state.status
@@ -553,6 +567,7 @@
               dryRun: st.dryRun !== false,
               onSend: send,
               onSkip: skip,
+              onOpenNote: openNote,
               color: d.__color,
               waveIdx: d.__wave,
             })))
@@ -562,7 +577,7 @@
     }
 
     function DraftItem(props) {
-      const { d, busy, canApprove, dryRun, onSend, onSkip, color, waveIdx } = props
+      const { d, busy, canApprove, dryRun, onSend, onSkip, onOpenNote, color, waveIdx } = props
       const [text, setText] = useState(d.replyText || '')
       return h('div', {
         className: 'xhs-card',
@@ -579,6 +594,11 @@
         h('div', { className: 'xhs-row' },
           h('span', { className: 'xhs-mut' }, (d.user || '') + (d.liked ? ' · 赞 ' + d.liked : '') + (d.sceneName ? ' · ' + d.sceneName : '')),
         ),
+        h('button', {
+          className: 'xhs-link',
+          title: '在浏览器打开这篇小红书笔记',
+          onClick: () => onOpenNote(d),
+        }, '笔记：' + (d.noteTitle || '（无标题）') + ' ↗'),
         h('div', { className: 'xhs-quote' }, d.content || ''),
         h('textarea', { className: 'xhs-area', value: text, onChange: (e) => setText(e.target.value) }),
         h('div', { className: 'xhs-row', style: { marginTop: 6 } },

@@ -373,12 +373,14 @@ function renderDrafts(list){
       (d.sent?'<span class="pill bad">已发送</span>':'') +
       '<span class="hint" style="margin-left:6px">'+esc(fmtTime(d.createdAt))+'</span>' +
       ' · '+esc(d.user||'')+' · 赞 '+(d.liked||0)+(d.sceneName?(' · '+esc(d.sceneName)):'')+'</div>' +
+      '<div class="hint" style="margin:2px 0 4px">笔记：<a href="javascript:void(0)" onclick="openNote('+i+')" style="color:#7fb3d5;text-decoration:none">'+esc(d.noteTitle||'（无标题）')+' ↗</a></div>' +
       '<div class="quote">'+esc(d.content||'')+'</div>' +
       '<textarea id="t'+i+'" style="min-height:52px">'+esc(d.replyText||'')+'</textarea>' +
       '<div class="flex" style="margin-top:8px">' +
         (S.local === false
           ? '<span class="hint">发送需在电脑上确认</span>'
           : '<button class="small" onclick="send('+i+')"'+(d.sent?' disabled':'')+'>发送这条</button>') +
+        '<button class="ghost small" onclick="openNote('+i+')">打开笔记</button>' +
         '<button class="ghost small" onclick="skip('+i+')">跳过</button>' +
         '<span class="hint" id="m'+i+'"></span>' +
       '</div></div>'
@@ -411,6 +413,18 @@ async function skip(i){
   const d = S.drafts[i]
   await fetch('/api/skip', {method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({commentId:d.commentId})})
   load()
+}
+
+async function openNote(i){
+  const d = S.drafts[i]
+  if(!d || !d.feedId){ toast('这条草稿没有笔记 id'); return }
+  const r = await fetch('/api/open-note', {
+    method:'POST', headers:{'content-type':'application/json'},
+    body: JSON.stringify({ feedId: d.feedId, xsecToken: d.xsecToken })
+  })
+  const j = await r.json()
+  if(!j.ok){ toast(j.error || '打开失败'); return }
+  toast('已在浏览器打开笔记')
 }
 
 /* ---------- 主控面板 ---------- */
