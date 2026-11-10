@@ -35,6 +35,7 @@ export function startPanel(opts) {
     getScripts,
     saveScripts,
     openLoginWindow,
+    resetJobStats,
     getStatus,
     run,
     control,
@@ -77,7 +78,7 @@ export function startPanel(opts) {
   }
 
   const json = (res, code, obj) => {
-    res.writeHead(code, { 'content-type': 'application/json; charset=utf-8', ...CORS })
+    res.writeHead(code, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', ...CORS })
     res.end(JSON.stringify(obj))
   }
 
@@ -136,7 +137,7 @@ export function startPanel(opts) {
             return
           }
         }
-        res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
+        res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' })
         res.end(readPage())
         return
       }
@@ -219,7 +220,7 @@ export function startPanel(opts) {
         return json(res, 200, { ok: true, url: target })
       }
 
-      // 清空回复清单：只清 drafts.jsonl，不动已发送记录 / 去重记录 / 话术库
+      // 清空回复清单：清 drafts.jsonl + 主控页的本次运行统计（不动已发送/去重记录/话术库）
       if (req.method === 'POST' && url.pathname === '/api/drafts/clear') {
         if (!isLocal(req)) {
           return json(res, 403, { ok: false, blocked: 'local_only', error: '清空清单只能在电脑上做' })
@@ -228,6 +229,7 @@ export function startPanel(opts) {
         try { writeFileSync(draftsPath, '') } catch (e) {
           return json(res, 500, { ok: false, error: String(e?.message ?? e) })
         }
+        try { if (resetJobStats) resetJobStats() } catch { /* 统计归零失败不影响清单清空 */ }
         return json(res, 200, { ok: true, cleared: n })
       }
 

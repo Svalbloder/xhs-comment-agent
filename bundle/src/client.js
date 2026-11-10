@@ -353,7 +353,7 @@
       }
 
       const clearDrafts = async () => {
-        if (!window.confirm('清空整个回复清单？\n\n只删草稿记录，不影响已发送记录、去重记录和话术库。')) return
+        if (!window.confirm('清空回复清单？\n\n会清掉：草稿列表 + 主控页的本次运行统计。\n不会动：已发送记录、评论去重记录、话术库、规则。')) return
         setBusy(true)
         const r = await api('/api/drafts/clear', { method: 'POST' })
         setBusy(false)

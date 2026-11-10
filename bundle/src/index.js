@@ -699,6 +699,34 @@ function applyInner(ctx, config = {}) {
         getScripts: () => getScripts(),
         saveScripts: (raw) => saveScripts(raw),
         openLoginWindow: () => openLoginWindow(),
+        // 清空清单时顺带把"本次运行统计"归零，否则主控页的数字看着像没清掉
+        resetJobStats: () => {
+          if (!state.job) return
+          state.job = {
+            ...state.job,
+            status: running ? state.job.status : 'idle',
+            current: null,
+            cycles: 0,
+            notesTotal: 0,
+            notesDone: 0,
+            noteHits: 0,
+            feedsScanned: 0,
+            candidates: 0,
+            drafted: 0,
+            sent: 0,
+            skippedSeen: 0,
+            skippedAuthor: 0,
+            skippedBlacklist: 0,
+            skippedIp: 0,
+            skippedNoScene: 0,
+            skippedRepeat: 0,
+            skippedSceneQuota: 0,
+            blocked: 0,
+            errors: [],
+            tokens: { input: 0, output: 0, total: 0, calls: 0 },
+          }
+          persist()
+        },
         getStatus: async () => {
           const ready = await ensureService()
           let login = null

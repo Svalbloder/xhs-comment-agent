@@ -394,7 +394,7 @@ function renderDrafts(list){
 }
 
 async function clearDrafts(){
-  if(!confirm('清空整个回复清单？\n\n只删草稿记录，不影响已发送记录、去重记录和话术库。')) return
+  if(!confirm('清空回复清单？\n\n会清掉：草稿列表 + 主控页的本次运行统计（轮次/笔记/候选/草稿/错误）。\n不会动：已发送记录、评论去重记录、话术库、规则。')) return
   const r = await fetch('/api/drafts/clear', { method: 'POST' })
   const j = await r.json()
   if(!j.ok){ toast(j.error || j.blocked || '清空失败'); return }
