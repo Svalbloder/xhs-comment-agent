@@ -259,12 +259,25 @@ function applyInner(ctx, config = {}) {
     return { ok: true, started: true, exe: loginExe }
   }
 
-  const ping = async () => {
+  // 健康检查缓存：
+  // 抓评论时 sidecar 在驱动浏览器，/health 可能几秒不应答；1.5s 超时就判离线会让 UI 闪。
+  // 成功结果缓存 2 秒减少重复探测；失败但进程还活着、且 90 秒内成功过，就报"忙"而不是"离线"。
+  let healthCache = { at: 0, ok: false, lastOkAt: 0 }
+
+  const ping = async (force = false) => {
+    if (!force && healthCache.ok && (Date.now() - healthCache.at) < 2000) return true
     try {
-      const res = await fetch(`${origin}/health`, { signal: AbortSignal.timeout(1500) })
+      const res = await fetch(`${origin}/health`, { signal: AbortSignal.timeout(3000) })
+      healthCache = { at: Date.now(), ok: res.ok, lastOkAt: res.ok ? Date.now() : healthCache.lastOkAt }
       return res.ok
-    } catch { return false }
+    } catch {
+      healthCache = { at: Date.now(), ok: false, lastOkAt: healthCache.lastOkAt }
+      return false
+    }
   }
+
+  const sidecarAlive = () => !!(child && !child.killed && child.exitCode === null)
+  const sidecarBusy = () => sidecarAlive() && (Date.now() - healthCache.lastOkAt) < 90000
 
   const ensureService = async () => {
     if (await ping()) return { ok: true, started: false }
@@ -804,6 +817,7 @@ function applyInner(ctx, config = {}) {
           const r = getRules()
           return {
             healthy: ready.ok,
+            busy: !ready.ok && sidecarBusy(),
             reason: ready.reason ?? null,
             login,
             loginWindow: {

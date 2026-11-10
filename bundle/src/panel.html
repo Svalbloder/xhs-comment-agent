@@ -24,6 +24,7 @@
   .pill{display:inline-block;padding:2px 8px;border-radius:999px;background:#232833;color:var(--mut);font-size:12px;margin:0 6px 6px 0}
   .pill.ok{background:rgba(47,191,113,.15);color:var(--ok)}
   .pill.bad{background:rgba(255,46,77,.15);color:var(--acc)}
+  .pill.warn{background:rgba(230,162,60,.15);color:var(--warn)}
   button.pill{border:0;font:inherit;padding:2px 8px;border-radius:999px}
   .draft{border-top:1px solid var(--line);padding:12px 0}
   .draft:first-child{border-top:0}
@@ -266,8 +267,13 @@ function renderStatus(st){
     : (!st.login
       ? '<span class="pill">登录状态检查中…</span>'
       : '<button class="pill bad" onclick="openLogin()" style="cursor:pointer" title="打开小红书登录窗口，扫码或换账号">未登录 · 点这里扫码</button>')
+  const svcPill = st.healthy
+    ? '<span class="pill ok">服务 在线</span>'
+    : (st.busy
+      ? '<span class="pill warn" title="sidecar 正在抓取，暂时没空应答健康检查">服务 忙</span>'
+      : '<span class="pill bad">服务 离线</span>')
   $('status').innerHTML =
-    '<span class="pill '+(st.healthy?'ok':'bad')+'">服务 '+(st.healthy?'在线':'离线')+'</span>' +
+    svcPill +
     loginPill +
     '<span class="pill">今日 '+st.quota.dayCount+'/'+st.quota.daily_quota+'</span>' +
     '<span class="pill">本小时 '+st.quota.hourCount+'/'+st.quota.hourly_quota+'</span>' +

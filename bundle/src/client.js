@@ -352,7 +352,11 @@
 
       return h('div', { className: 'xhs-pane' },
         h('div', { className: 'xhs-row' },
-          h('span', { className: 'xhs-chip ' + (st.healthy ? 'ok' : 'bad') }, st.healthy ? '服务在线' : '服务离线'),
+          st.healthy
+            ? h('span', { className: 'xhs-chip ok' }, '服务在线')
+            : (st.busy
+              ? h('span', { className: 'xhs-chip', style: { color: '#e6a23c', borderColor: '#e6a23c' }, title: 'sidecar 正在抓取，暂时没空应答健康检查' }, '服务忙')
+              : h('span', { className: 'xhs-chip bad' }, '服务离线')),
           logged
             ? h('span', {
               className: 'xhs-chip ok',
