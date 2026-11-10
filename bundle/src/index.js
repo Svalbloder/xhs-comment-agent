@@ -116,6 +116,11 @@ function applyInner(ctx, config = {}) {
       const raw = JSON.parse(readFileSync(scriptsPath, 'utf8'))
       const v = validateScripts(raw)
       if (!v.ok) safeLog(`scripts invalid: ${v.errors.join('; ')}`)
+      // 话术库还没配搜索词时，把规则页的老关键词顶上来，避免 UI 显示空、实际却在用另一套
+      if (!v.lib.search.keywords.length) {
+        const legacy = (getRules().keywords ?? []).filter(Boolean)
+        if (legacy.length) v.lib.search.keywords = legacy.slice()
+      }
       return v.lib
     } catch (e) {
       safeLog(`scripts load failed: ${e?.message ?? e}`)
