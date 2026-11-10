@@ -143,6 +143,9 @@
   function describeTokens(job, st) {
     const t = (job && job.tokens) || { input: 0, output: 0, total: 0, calls: 0 }
     const u = (st && st.usage) || { total: 0 }
+    if ((t.calls || 0) === 0) {
+      return '本轮未调用模型（话术库模板直发，不耗 token） ｜ 累计 ' + fmt(u.total) + ' token'
+    }
     return '本轮 token ' + fmt(t.total) + '（入 ' + fmt(t.input) + ' / 出 ' + fmt(t.output) + ' · ' +
       (t.calls || 0) + ' 次调用） ｜ 累计 ' + fmt(u.total)
   }

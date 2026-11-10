@@ -478,8 +478,10 @@ function renderControl(st){
   const t = (job && job.tokens) || { input: 0, output: 0, total: 0, calls: 0 }
   const u = st.usage || { input: 0, output: 0, total: 0, calls: 0 }
   if ($('runTokens')) {
-    $('runTokens').textContent = '本轮 token ' + fmtNum(t.total) + '（入 ' + fmtNum(t.input) + ' / 出 ' + fmtNum(t.output) +
-      ' · ' + (t.calls || 0) + ' 次调用） ｜ 累计 ' + fmtNum(u.total)
+    $('runTokens').textContent = (t.calls || 0) === 0
+      ? '本轮未调用模型（话术库模板直发，不耗 token） ｜ 累计 ' + fmtNum(u.total) + ' token'
+      : '本轮 token ' + fmtNum(t.total) + '（入 ' + fmtNum(t.input) + ' / 出 ' + fmtNum(t.output) +
+        ' · ' + (t.calls || 0) + ' 次调用） ｜ 累计 ' + fmtNum(u.total)
   }
 
   if ($('btnStart')) $('btnStart').disabled = running
