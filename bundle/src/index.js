@@ -17,6 +17,7 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { startPanel } from './panel.js'
 import { createRunner, STOP } from './run.js'
+import { createSidecar } from './sidecar.js'
 import { validateScripts } from './scripts.js'
 
 // 不 import 任何 @deepseek-ai/* ：本插件通过 profile 补丁以「绝对路径」加载，
@@ -218,135 +219,20 @@ function applyInner(ctx, config = {}) {
   // 首次运行把默认话术库播种到状态目录（此时 log 已就绪）
   seedScripts()
 
-  let child = null
-  let starting = null
-  let loginProc = null
+  const sidecar = createSidecar({
+    config,
+    log,
+    workDir,
+    port,
+    token,
+  })
 
-  // 登录窗口：直接拉起 xiaohongshu-login.exe（有头 Chromium），扫码/换号都在里面完成
-  const loginExe = expand(config.loginBinaryPath ?? join(homedir(), '.dsh', 'runtimes', 'xiaohongshu-login.exe'))
-  const cookiesFile = join(workDir, 'cookies.json')
-  const cookieMtime = () => { try { return statSync(cookiesFile).mtimeMs } catch { return 0 } }
-
-  const openLoginWindow = () => {
-    if (loginProc && loginProc.exitCode === null) {
-      return { ok: true, already: true, hint: '登录窗口已经开着，去那个窗口操作' }
-    }
-    if (!existsSync(loginExe)) {
-      return { ok: false, error: `找不到登录程序：${loginExe}（重跑 deploy\\install.ps1 会补下载）` }
-    }
-    const before = cookieMtime()
-    try {
-      loginProc = spawn(loginExe, [], { cwd: workDir, stdio: 'ignore', windowsHide: false })
-    } catch (e) {
-      return { ok: false, error: `启动登录窗口失败：${e?.message ?? e}` }
-    }
-    log(`login window opened: ${loginExe}`)
-    loginProc.on('exit', async (code) => {
-      loginProc = null
-      const changed = cookieMtime() > before
-      invalidateLogin()
-      log(`login window closed code=${code} cookiesChanged=${changed}`)
-      // 关窗后重启 sidecar，让它重新读 cookies.json（否则仍是旧会话）
-      try {
-        if (child && !child.killed) child.kill()
-      } catch { /* ignore */ }
-      child = null
-      starting = null
-      if (changed) {
-        try { await ensureService() } catch { /* 下次调用还会重试 */ }
-      }
-    })
-    return { ok: true, started: true, exe: loginExe }
-  }
-
-  // 健康检查缓存：
-  // 抓评论时 sidecar 在驱动浏览器，/health 可能几秒不应答；1.5s 超时就判离线会让 UI 闪。
-  // 成功结果缓存 2 秒减少重复探测；失败但进程还活着、且 90 秒内成功过，就报"忙"而不是"离线"。
-  let healthCache = { at: 0, ok: false, lastOkAt: 0 }
-
-  const ping = async (force = false) => {
-    if (!force && healthCache.ok && (Date.now() - healthCache.at) < 2000) return true
-    try {
-      const res = await fetch(`${origin}/health`, { signal: AbortSignal.timeout(3000) })
-      healthCache = { at: Date.now(), ok: res.ok, lastOkAt: res.ok ? Date.now() : healthCache.lastOkAt }
-      return res.ok
-    } catch {
-      healthCache = { at: Date.now(), ok: false, lastOkAt: healthCache.lastOkAt }
-      return false
-    }
-  }
-
-  const sidecarAlive = () => !!(child && !child.killed && child.exitCode === null)
-  const sidecarBusy = () => sidecarAlive() && (Date.now() - healthCache.lastOkAt) < 90000
-
-  const ensureService = async () => {
-    if (await ping()) return { ok: true, started: false }
-    if (!manageProcess) return { ok: false, started: false, reason: `服务未在 ${origin} 运行（manageProcess=false）` }
-    if (!binaryPath || !existsSync(binaryPath)) {
-      return { ok: false, started: false, reason: `binaryPath 不存在：${binaryPath || '(未配置)'}` }
-    }
-    if (!starting) {
-      starting = (async () => {
-        log(`spawn ${binaryPath} -port :${port}`)
-        child = spawn(binaryPath, ['-port', `:${port}`, ...(config.headless === false ? ['-headless=false'] : [])], {
-          windowsHide: true,
-          cwd: workDir,
-          stdio: 'ignore',
-          env: { ...process.env, ...(token ? { AUTH_TOKEN: token } : {}) },
-        })
-        child.on('exit', (code) => { invalidateLogin(); log(`sidecar exited code=${code}`) })
-        for (let i = 0; i < 90; i++) {
-          if (await ping()) return
-          await new Promise((r) => setTimeout(r, 1000))
-        }
-        throw new Error('sidecar 90s 内未就绪')
-      })().finally(() => { starting = null })
-    }
-    try { await starting; return { ok: true, started: true } } catch (e) {
-      return { ok: false, started: true, reason: String(e?.message ?? e) }
-    }
-  }
-
-  // opts.timeoutMs：登录态检查这类"卡住就卡住"的调用要短超时，不能把整个 /api/state 拖死
-  const api = async (path, body, opts = {}) => {
-    const ready = await ensureService()
-    if (!ready.ok) throw new Error(`xhs service unavailable: ${ready.reason}`)
-    const res = await fetch(`${apiBase}${path}`, {
-      method: body === undefined ? 'GET' : 'POST',
-      headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}) },
-      body: body === undefined ? undefined : JSON.stringify(body),
-      signal: AbortSignal.timeout(Number(opts.timeoutMs ?? config.requestTimeoutMs ?? 600000)),
-    })
-    const text = await res.text()
-    let json = null
-    try { json = text ? JSON.parse(text) : null } catch { /* 非 JSON */ }
-    if (!res.ok) throw new Error(`HTTP ${res.status} ${path}: ${text.slice(0, 300)}`)
-    if (json && (json.success === false || (typeof json.code === 'number' && json.code !== 0))) {
-      throw new Error(`${path} 返回失败: ${json.msg ?? json.message ?? text.slice(0, 300)}`)
-    }
-    return json?.data ?? json
-  }
-
-  // 登录态缓存。
-  // sidecar 每次查登录都要动一次浏览器页面，又慢又重；面板 2.5s、右侧栏 4s 各拉一次 /api/state，
-  // 每次都真查就会互相踩，超时那次显示「未登录」、下次又「已登录」——这就是闪烁的来源。
-  // 30 秒内复用结果；查询失败保留上一次成功的值并标记 stale，宁可显示旧状态也不闪。
-  const LOGIN_TTL_MS = 30000
-  let loginCache = { at: 0, value: null, error: null }
-  const invalidateLogin = () => { loginCache = { at: 0, value: null, error: null } }
-
-  const readLogin = async () => {
-    if (loginCache.value && (Date.now() - loginCache.at) < LOGIN_TTL_MS) return loginCache.value
-    try {
-      const v = await api('/login/status', undefined, { timeoutMs: 8000 })
-      loginCache = { at: Date.now(), value: v, error: null }
-      return v
-    } catch (e) {
-      loginCache = { ...loginCache, error: String(e?.message ?? e) }
-      if (loginCache.value) return { ...loginCache.value, stale: true }
-      return { error: loginCache.error, stale: true }
-    }
-  }
+  // 下面这几个别名保持原有调用点不变（工具、面板、执行器都直接用）
+  const ensureService = () => sidecar.ensureService()
+  const api = (path, body, opts) => sidecar.api(path, body, opts)
+  const readLogin = () => sidecar.readLogin()
+  const openLoginWindow = () => sidecar.openLoginWindow()
+  const sidecarBusy = () => sidecar.busy()
 
   const refreshCounters = () => {
     const now = new Date()
@@ -463,7 +349,7 @@ function applyInner(ctx, config = {}) {
       refreshCounters()
       const r = getRules()
       return {
-        service: { origin, healthy, managed: manageProcess, pid: child?.pid ?? null, reason: ready.reason ?? null },
+        service: { origin, healthy, managed: manageProcess, pid: sidecar.pid(), reason: ready.reason ?? null },
         login,
         dryRun: effDryRun(),
         requireApproval: requireApproval(),
@@ -821,8 +707,8 @@ function applyInner(ctx, config = {}) {
             reason: ready.reason ?? null,
             login,
             loginWindow: {
-              available: existsSync(loginExe),
-              open: !!(loginProc && loginProc.exitCode === null),
+              available: sidecar.loginAvailable(),
+              open: sidecar.loginOpen(),
             },
             dryRun: effDryRun(),
             requireApproval: requireApproval(),
@@ -862,11 +748,8 @@ function applyInner(ctx, config = {}) {
   if (panel) log(`panel listening: ${panel.url}`)
 
   ctx.effect(() => () => {
-    if (child && !child.killed) {
-      log('dispose: killing sidecar')
-      try { child.kill() } catch { /* ignore */ }
-      child = null
-    }
+    log('dispose: killing sidecar')
+    sidecar.dispose()
     try { panel?.close() } catch { /* ignore */ }
   }, 'xhs-comment-agent.sidecar')
 

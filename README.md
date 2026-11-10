@@ -170,6 +170,7 @@ bundle/src/            插件源码（零运行时依赖）
   client.js            客户端半侧：右侧栏标签页（手写 ESM，无打包）
   panel.js/.html       本地面板（兜底 UI + HTTP API）
   run.js               执行器：一轮/持续两种模式，暂停/继续/终止，token 统计
+  sidecar.js           sidecar 管理：进程/健康检查/REST/登录态/登录窗口
 deploy/                安装器 / 卸载器 / 急救脚本 / 部署说明
 docs/                  事故记录
 ```

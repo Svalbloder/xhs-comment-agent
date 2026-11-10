@@ -264,7 +264,7 @@ function renderStatus(st){
   // 还没查过（null）就先显示「检查中」，别直接判成未登录造成闪烁
   const loginPill = logged
     ? '<span class="pill ok" title="'+(st.login.stale?'上一次检查失败，显示的是缓存结果':'实时检查')+'">已登录 · '+esc(st.login.username||'')+(st.login.stale?'（缓存）':'')+'</span>'
-    : (!st.login
+    : ((!st.login || st.login.pending)
       ? '<span class="pill">登录状态检查中…</span>'
       : '<button class="pill bad" onclick="openLogin()" style="cursor:pointer" title="打开小红书登录窗口，扫码或换账号">未登录 · 点这里扫码</button>')
   const svcPill = st.healthy
@@ -539,11 +539,22 @@ function renderScripts(path){
       '<label>触发词（逗号分隔，命中就归到这个场景）</label>' +
       '<input data-f="match" value="' + esc((s.match && s.match.any || []).join('，')) + '">' +
       '<label>话术池（一行一条）</label>' +
-      '<textarea data-f="templates" style="min-height:110px">' + esc((s.templates || []).join('\n')) + '</textarea>' +
+      '<textarea data-f="templates" style="min-height:110px;overflow:hidden;resize:vertical">' + esc((s.templates || []).join('\n')) + '</textarea>' +
       (s.notes ? '<div class="hint">' + esc(s.notes) + '</div>' : '') +
       '</div>'
   }
   $('scriptsBox').innerHTML = html
+  // 话术池自动撑高：一条一行，别再让人滚动看 3 行半
+  $('scriptsBox').querySelectorAll('textarea[data-f="templates"]').forEach(function(t){
+    autoGrow(t)
+    t.oninput = function(){ autoGrow(t) }
+  })
+}
+
+function autoGrow(el){
+  if(!el) return
+  el.style.height = 'auto'
+  el.style.height = Math.min(720, el.scrollHeight + 2) + 'px'
 }
 
 function collectScripts(){

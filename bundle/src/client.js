@@ -121,6 +121,13 @@
     return p(d.getMonth() + 1) + '-' + p(d.getDate()) + ' ' + p(d.getHours()) + ':' + p(d.getMinutes())
   }
 
+  // 话术池自动撑高，最多 720px
+  function autoGrow(el) {
+    if (!el) return
+    el.style.height = 'auto'
+    el.style.height = Math.min(720, el.scrollHeight + 2) + 'px'
+  }
+
   function decorateWaves(list) {
     let lastKey = null
     let waveIdx = -1
@@ -362,7 +369,7 @@
               className: 'xhs-chip ok',
               title: st.login.stale ? '上次检查失败，显示缓存结果' : '实时检查',
             }, '已登录 · ' + (st.login.username || '') + (st.login.stale ? '（缓存）' : ''))
-            : (!st.login
+            : ((!st.login || st.login.pending)
               ? h('span', { className: 'xhs-chip' }, '登录状态检查中…')
               : h('button', {
                 className: 'xhs-chip bad xhs-chip-btn',
@@ -458,8 +465,10 @@
           h('label', { className: 'xhs-label' }, '话术池（一行一条）'),
           h('textarea', {
             className: 'xhs-area',
-            style: { minHeight: 110 },
+            style: { minHeight: 110, overflow: 'hidden', resize: 'vertical' },
             value: (s.templates || []).join('\n'),
+            ref: (el) => { if (el) autoGrow(el) },
+            onInput: (e) => autoGrow(e.target),
             onChange: (e) => patchScene(i, { templates: e.target.value.split('\n') }),
           }),
           s.notes ? h('div', { className: 'xhs-mut' }, s.notes) : null,

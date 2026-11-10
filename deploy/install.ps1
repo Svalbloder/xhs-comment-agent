@@ -113,7 +113,7 @@ $srcDir = Join-Path $PSScriptRoot '..\bundle\src'
 $pkgJson = Join-Path $PSScriptRoot '..\bundle\package.json'
 if (-not (Test-Path $srcDir)) { Die "安装包不完整：找不到 $srcDir" }
 if (-not (Test-Path $pkgJson)) { Die "安装包不完整：找不到 bundle\package.json" }
-foreach ($f in 'index.js','panel.js','panel.html','client.js','run.js','scripts.js','scripts.default.json') {
+foreach ($f in 'index.js','panel.js','panel.html','client.js','run.js','scripts.js','sidecar.js','scripts.default.json') {
   if (-not (Test-Path (Join-Path $srcDir $f))) { Die "安装包缺文件：bundle\src\$f" }
 }
 

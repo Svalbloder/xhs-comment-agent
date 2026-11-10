@@ -57,7 +57,7 @@ if (-not (Test-Path $Target)) {
 if (-not (Test-Path $TargetSrc)) { Die "插件目录里没有 src：$TargetSrc" }
 Ok "目标 $Target"
 
-$required = 'index.js', 'run.js', 'panel.js', 'panel.html', 'client.js', 'scripts.js', 'scripts.default.json'
+$required = 'index.js', 'run.js', 'panel.js', 'panel.html', 'client.js', 'scripts.js', 'sidecar.js', 'scripts.default.json'
 foreach ($f in $required) {
   if (-not (Test-Path (Join-Path $SrcDir $f))) { Die "仓库缺文件：bundle\src\$f" }
 }
