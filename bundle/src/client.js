@@ -354,12 +354,17 @@
         h('div', { className: 'xhs-row' },
           h('span', { className: 'xhs-chip ' + (st.healthy ? 'ok' : 'bad') }, st.healthy ? '服务在线' : '服务离线'),
           logged
-            ? h('span', { className: 'xhs-chip ok' }, '已登录 · ' + (st.login.username || ''))
-            : h('button', {
-              className: 'xhs-chip bad xhs-chip-btn',
-              title: '打开小红书登录窗口，扫码或换账号',
-              onClick: openLogin,
-            }, '未登录 · 点这里扫码'),
+            ? h('span', {
+              className: 'xhs-chip ok',
+              title: st.login.stale ? '上次检查失败，显示缓存结果' : '实时检查',
+            }, '已登录 · ' + (st.login.username || '') + (st.login.stale ? '（缓存）' : ''))
+            : (!st.login
+              ? h('span', { className: 'xhs-chip' }, '登录状态检查中…')
+              : h('button', {
+                className: 'xhs-chip bad xhs-chip-btn',
+                title: '打开小红书登录窗口，扫码或换账号',
+                onClick: openLogin,
+              }, '未登录 · 点这里扫码')),
           h('span', { className: 'xhs-chip' }, '今日 ' + st.quota.dayCount + '/' + st.quota.daily_quota),
           h('span', { className: 'xhs-chip' }, '本小时 ' + st.quota.hourCount + '/' + st.quota.hourly_quota),
         ),

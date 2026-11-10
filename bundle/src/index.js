@@ -244,6 +244,7 @@ function applyInner(ctx, config = {}) {
     loginProc.on('exit', async (code) => {
       loginProc = null
       const changed = cookieMtime() > before
+      invalidateLogin()
       log(`login window closed code=${code} cookiesChanged=${changed}`)
       // 关窗后重启 sidecar，让它重新读 cookies.json（否则仍是旧会话）
       try {
@@ -280,7 +281,7 @@ function applyInner(ctx, config = {}) {
           stdio: 'ignore',
           env: { ...process.env, ...(token ? { AUTH_TOKEN: token } : {}) },
         })
-        child.on('exit', (code) => log(`sidecar exited code=${code}`))
+        child.on('exit', (code) => { invalidateLogin(); log(`sidecar exited code=${code}`) })
         for (let i = 0; i < 90; i++) {
           if (await ping()) return
           await new Promise((r) => setTimeout(r, 1000))
@@ -311,6 +312,27 @@ function applyInner(ctx, config = {}) {
       throw new Error(`${path} 返回失败: ${json.msg ?? json.message ?? text.slice(0, 300)}`)
     }
     return json?.data ?? json
+  }
+
+  // 登录态缓存。
+  // sidecar 每次查登录都要动一次浏览器页面，又慢又重；面板 2.5s、右侧栏 4s 各拉一次 /api/state，
+  // 每次都真查就会互相踩，超时那次显示「未登录」、下次又「已登录」——这就是闪烁的来源。
+  // 30 秒内复用结果；查询失败保留上一次成功的值并标记 stale，宁可显示旧状态也不闪。
+  const LOGIN_TTL_MS = 30000
+  let loginCache = { at: 0, value: null, error: null }
+  const invalidateLogin = () => { loginCache = { at: 0, value: null, error: null } }
+
+  const readLogin = async () => {
+    if (loginCache.value && (Date.now() - loginCache.at) < LOGIN_TTL_MS) return loginCache.value
+    try {
+      const v = await api('/login/status', undefined, { timeoutMs: 8000 })
+      loginCache = { at: Date.now(), value: v, error: null }
+      return v
+    } catch (e) {
+      loginCache = { ...loginCache, error: String(e?.message ?? e) }
+      if (loginCache.value) return { ...loginCache.value, stale: true }
+      return { error: loginCache.error, stale: true }
+    }
   }
 
   const refreshCounters = () => {
@@ -423,7 +445,7 @@ function applyInner(ctx, config = {}) {
       const healthy = ready.ok
       let login = null
       if (healthy) {
-        try { login = await api('/login/status', undefined, { timeoutMs: 8000 }) } catch (e) { login = { error: String(e?.message ?? e) } }
+        try { login = await readLogin() } catch (e) { login = { error: String(e?.message ?? e) } }
       }
       refreshCounters()
       const r = getRules()
@@ -776,7 +798,7 @@ function applyInner(ctx, config = {}) {
           const ready = await ensureService()
           let login = null
           if (ready.ok) {
-            try { login = await api('/login/status', undefined, { timeoutMs: 8000 }) } catch (e) { login = { error: String(e?.message ?? e) } }
+            try { login = await readLogin() } catch (e) { login = { error: String(e?.message ?? e) } }
           }
           refreshCounters()
           const r = getRules()

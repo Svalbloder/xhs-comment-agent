@@ -260,11 +260,15 @@ Object.keys(TAGS).forEach(renderTags)
 
 function renderStatus(st){
   const logged = st.login && st.login.is_logged_in
+  // 还没查过（null）就先显示「检查中」，别直接判成未登录造成闪烁
+  const loginPill = logged
+    ? '<span class="pill ok" title="'+(st.login.stale?'上一次检查失败，显示的是缓存结果':'实时检查')+'">已登录 · '+esc(st.login.username||'')+(st.login.stale?'（缓存）':'')+'</span>'
+    : (!st.login
+      ? '<span class="pill">登录状态检查中…</span>'
+      : '<button class="pill bad" onclick="openLogin()" style="cursor:pointer" title="打开小红书登录窗口，扫码或换账号">未登录 · 点这里扫码</button>')
   $('status').innerHTML =
     '<span class="pill '+(st.healthy?'ok':'bad')+'">服务 '+(st.healthy?'在线':'离线')+'</span>' +
-    (logged
-      ? '<span class="pill ok">已登录 · '+esc(st.login.username||'')+'</span>'
-      : '<button class="pill bad" onclick="openLogin()" style="cursor:pointer" title="打开小红书登录窗口，扫码或换账号">未登录 · 点这里扫码</button>') +
+    loginPill +
     '<span class="pill">今日 '+st.quota.dayCount+'/'+st.quota.daily_quota+'</span>' +
     '<span class="pill">本小时 '+st.quota.hourCount+'/'+st.quota.hourly_quota+'</span>' +
     '<span class="pill">已发送 '+st.sentTotal+'</span>' +
