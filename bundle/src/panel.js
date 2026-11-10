@@ -193,6 +193,18 @@ export function startPanel(opts) {
         return json(res, 200, { ok: true, rules: next })
       }
 
+      // 清空回复清单：只清 drafts.jsonl，不动已发送记录 / 去重记录 / 话术库
+      if (req.method === 'POST' && url.pathname === '/api/drafts/clear') {
+        if (!isLocal(req)) {
+          return json(res, 403, { ok: false, blocked: 'local_only', error: '清空清单只能在电脑上做' })
+        }
+        const n = readDrafts().length
+        try { writeFileSync(draftsPath, '') } catch (e) {
+          return json(res, 500, { ok: false, error: String(e?.message ?? e) })
+        }
+        return json(res, 200, { ok: true, cleared: n })
+      }
+
       // 运行控制：pause / resume / stop
       if (req.method === 'POST' && url.pathname === '/api/control') {
         const body = await readBody(req)

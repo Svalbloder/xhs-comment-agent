@@ -103,6 +103,34 @@
       ' · 候选 ' + (job.candidates || 0) + ' · 草稿 ' + (job.drafted || 0) + ' · 已发 ' + (job.sent || 0) +
       ((job.errors && job.errors.length) ? (' · 错误 ' + job.errors.length) : '')
   }
+  // 同一波（同一次运行 + 同一轮）生成的草稿用同一颜色，低饱和、深色底上不刺眼
+  const WAVE_COLORS = ['#7fb3d5', '#8fd3c8', '#a3c9a5', '#e6c88a', '#b8a7e0', '#e0a7b4', '#8fc1e3', '#c2b280']
+
+  function hexToRgba(hex, a) {
+    const h = String(hex).replace('#', '')
+    const r = parseInt(h.slice(0, 2), 16)
+    const g = parseInt(h.slice(2, 4), 16)
+    const b = parseInt(h.slice(4, 6), 16)
+    return 'rgba(' + r + ',' + g + ',' + b + ',' + a + ')'
+  }
+
+  function fmtTime(iso) {
+    const d = new Date(iso)
+    if (isNaN(d.getTime())) return ''
+    const p = (n) => String(n).padStart(2, '0')
+    return p(d.getMonth() + 1) + '-' + p(d.getDate()) + ' ' + p(d.getHours()) + ':' + p(d.getMinutes())
+  }
+
+  function decorateWaves(list) {
+    let lastKey = null
+    let waveIdx = -1
+    return (list || []).map((d) => {
+      const key = (d.jobId || '') + '#' + (d.cycle == null ? '' : d.cycle) + '#' + String(d.createdAt || '').slice(0, 16)
+      if (key !== lastKey) { lastKey = key; waveIdx += 1 }
+      return { ...d, __color: WAVE_COLORS[waveIdx % WAVE_COLORS.length], __wave: waveIdx }
+    })
+  }
+
   function describeTokens(job, st) {
     const t = (job && job.tokens) || { input: 0, output: 0, total: 0, calls: 0 }
     const u = (st && st.usage) || { total: 0 }
@@ -302,11 +330,25 @@
         load()
       }
 
+      const clearDrafts = async () => {
+        if (!window.confirm('清空整个回复清单？\n\n只删草稿记录，不影响已发送记录、去重记录和话术库。')) return
+        setBusy(true)
+        const r = await api('/api/drafts/clear', { method: 'POST' })
+        setBusy(false)
+        if (r && r.ok) {
+          setMsg('已清空 ' + (r.cleared || 0) + ' 条草稿')
+          load()
+        } else {
+          setMsg('清空失败：' + ((r && (r.error || r.blocked)) || ''))
+        }
+        setTimeout(() => setMsg(''), 3000)
+      }
+
       if (!state || !form) return h('div', { className: 'xhs-pane' }, h('div', { className: 'xhs-mut' }, '连接面板中…（首次启动需要几秒）'))
 
       const st = state.status
       const logged = st.login && st.login.is_logged_in
-      const drafts = state.drafts || []
+      const drafts = decorateWaves(state.drafts || [])
 
       return h('div', { className: 'xhs-pane' },
         h('div', { className: 'xhs-row' },
@@ -454,20 +496,44 @@
         ) : null,
 
         tab === 'drafts' ? (drafts.length
-          ? drafts.map((d, i) => h(DraftItem, { key: d.commentId + i, d, busy, canApprove: st.requireApproval !== false, onSend: send, onSkip: skip }))
-          : h('div', { className: 'xhs-card xhs-mut' }, '还没有草稿。在对话里说「搜露营，把候选做成草稿」，抓完评论就会出现在这里。')
+          ? h('div', null,
+            h('div', { className: 'xhs-row', style: { marginBottom: 6 } },
+              h('span', { className: 'xhs-mut' }, '同一波次用同一颜色'),
+              h('div', { className: 'xhs-sp' }),
+              h('button', { className: 'xhs-btn', disabled: busy, onClick: clearDrafts }, '清空清单'),
+            ),
+            drafts.map((d, i) => h(DraftItem, {
+              key: d.commentId + i,
+              d,
+              busy,
+              canApprove: st.requireApproval !== false,
+              onSend: send,
+              onSkip: skip,
+              color: d.__color,
+              waveIdx: d.__wave,
+            })))
+          : h('div', { className: 'xhs-card xhs-mut' }, '还没有草稿。点「开始」或「跑一轮」，命中话术库的评论会出现在这里。')
         ) : null,
       )
     }
 
     function DraftItem(props) {
-      const { d, busy, canApprove, onSend, onSkip } = props
+      const { d, busy, canApprove, onSend, onSkip, color, waveIdx } = props
       const [text, setText] = useState(d.replyText || '')
-      return h('div', { className: 'xhs-card' },
+      return h('div', {
+        className: 'xhs-card',
+        style: color
+          ? { borderLeft: '3px solid ' + color, background: 'linear-gradient(90deg,' + hexToRgba(color, 0.08) + ' 0%,transparent 60%)' }
+          : null,
+      },
         h('div', { className: 'xhs-row' },
+          color ? h('span', { className: 'xhs-chip', style: { color, borderColor: color } }, '第 ' + (waveIdx + 1) + ' 波') : null,
           h('span', { className: 'xhs-chip' }, d.level === 2 ? '二级回复' : '一级评论'),
           d.sent ? h('span', { className: 'xhs-chip bad' }, '已发送') : null,
-          h('span', { className: 'xhs-mut' }, (d.user || '') + (d.liked ? ' · 赞 ' + d.liked : '')),
+          h('span', { className: 'xhs-mut' }, fmtTime(d.createdAt)),
+        ),
+        h('div', { className: 'xhs-row' },
+          h('span', { className: 'xhs-mut' }, (d.user || '') + (d.liked ? ' · 赞 ' + d.liked : '') + (d.sceneName ? ' · ' + d.sceneName : '')),
         ),
         h('div', { className: 'xhs-quote' }, d.content || ''),
         h('textarea', { className: 'xhs-area', value: text, onChange: (e) => setText(e.target.value) }),

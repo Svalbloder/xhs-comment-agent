@@ -180,11 +180,13 @@
 
   <div class="card">
     <div class="flex">
-      <strong>待审草稿</strong>
+      <strong>回复清单</strong>
       <span class="hint" id="draftCount"></span>
       <div class="sp"></div>
+      <button class="ghost small" onclick="clearDrafts()">清空清单</button>
       <button class="ghost small" onclick="load()">刷新</button>
     </div>
+    <div class="hint" style="margin-top:4px">同一波次生成的回复用同一种颜色；左侧色条 + 顶部「第 N 波」标签。</div>
     <div id="drafts"></div>
   </div>
 </div>
@@ -315,19 +317,46 @@ async function saveRules(){
   load()
 }
 
+/* 同一波（同一次运行、同一轮）生成的草稿用同一个颜色，柔和低饱和，深色底上不刺眼 */
+const WAVE_COLORS = ['#7fb3d5','#8fd3c8','#a3c9a5','#e6c88a','#b8a7e0','#e0a7b4','#8fc1e3','#c2b280']
+
+function hexToRgba(hex, a){
+  const h = hex.replace('#','')
+  const r = parseInt(h.slice(0,2),16), g = parseInt(h.slice(2,4),16), b = parseInt(h.slice(4,6),16)
+  return 'rgba('+r+','+g+','+b+','+a+')'
+}
+
+function fmtTime(iso){
+  const d = new Date(iso)
+  if(isNaN(d.getTime())) return ''
+  const p = function(n){ return String(n).padStart(2,'0') }
+  return p(d.getMonth()+1)+'-'+p(d.getDate())+' '+p(d.getHours())+':'+p(d.getMinutes())
+}
+
+function waveKey(d){
+  return (d.jobId || '') + '#' + (d.cycle == null ? '' : d.cycle) + '#' + String(d.createdAt||'').slice(0,16)
+}
+
 function renderDrafts(list){
   $('draftCount').textContent = list.length ? ('共 '+list.length+' 条') : ''
   if(!list.length){
-    $('drafts').innerHTML = '<div class="hint" style="padding:12px 0">还没有草稿。在对话里说「搜露营，把候选做成草稿」，抓完评论就会出现在这里。</div>'
+    $('drafts').innerHTML = '<div class="hint" style="padding:12px 0">还没有草稿。点「开始」或「跑一轮」，命中话术库的评论会出现在这里。</div>'
     return
   }
   let html = ''
+  let lastKey = null
+  let waveIdx = -1
   for(let i=0;i<list.length;i++){
     const d = list[i]
-    html += '<div class="draft" data-i="'+i+'">' +
-      '<div class="meta"><span class="pill">'+(d.level===2?'二级回复':'一级评论')+'</span>' +
+    const k = waveKey(d)
+    if(k !== lastKey){ lastKey = k; waveIdx += 1 }
+    const color = WAVE_COLORS[waveIdx % WAVE_COLORS.length]
+    html += '<div class="draft" data-i="'+i+'" style="border-left:3px solid '+color+';padding-left:10px;background:linear-gradient(90deg,'+hexToRgba(color,0.07)+' 0%,transparent 55%);border-radius:0 8px 8px 0">' +
+      '<div class="meta"><span class="pill" style="background:'+hexToRgba(color,0.18)+';color:'+color+'">第 '+(waveIdx+1)+' 波</span>' +
+      '<span class="pill">'+(d.level===2?'二级回复':'一级评论')+'</span>' +
       (d.sent?'<span class="pill bad">已发送</span>':'') +
-      esc(d.user||'')+' · 赞 '+(d.liked||0)+' · '+esc(String(d.createdAt||'').slice(0,19))+'</div>' +
+      '<span class="hint" style="margin-left:6px">'+esc(fmtTime(d.createdAt))+'</span>' +
+      ' · '+esc(d.user||'')+' · 赞 '+(d.liked||0)+(d.sceneName?(' · '+esc(d.sceneName)):'')+'</div>' +
       '<div class="quote">'+esc(d.content||'')+'</div>' +
       '<textarea id="t'+i+'" style="min-height:52px">'+esc(d.replyText||'')+'</textarea>' +
       '<div class="flex" style="margin-top:8px">' +
@@ -339,6 +368,15 @@ function renderDrafts(list){
       '</div></div>'
   }
   $('drafts').innerHTML = html
+}
+
+async function clearDrafts(){
+  if(!confirm('清空整个回复清单？\n\n只删草稿记录，不影响已发送记录、去重记录和话术库。')) return
+  const r = await fetch('/api/drafts/clear', { method: 'POST' })
+  const j = await r.json()
+  if(!j.ok){ toast(j.error || j.blocked || '清空失败'); return }
+  toast('已清空 ' + (j.cleared || 0) + ' 条草稿')
+  load()
 }
 
 async function send(i){
