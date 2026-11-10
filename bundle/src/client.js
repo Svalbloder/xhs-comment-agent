@@ -141,11 +141,14 @@
     )
   }
 
-    return function XhsPanel() {      const [state, setState] = useState(null)
+    return function XhsPanel() {
+      const [state, setState] = useState(null)
       const [tab, setTab] = useState('main')
       const [form, setForm] = useState(null)
       const [msg, setMsg] = useState('')
       const [busy, setBusy] = useState(false)
+      const [scripts, setScripts] = useState(null)
+      const [scriptsMsg, setScriptsMsg] = useState('')
 
       const load = useCallback(async () => {
         const s = await api('/api/state')
@@ -171,6 +174,42 @@
 
       useEffect(() => { load() }, [load])
       useEffect(() => { const t = setInterval(load, 4000); return () => clearInterval(t) }, [load])
+
+      const loadScripts = useCallback(async () => {
+        const r = await api('/api/scripts')
+        if (r && r.ok && r.scripts) setScripts(r.scripts)
+        else setScriptsMsg('话术库加载失败')
+      }, [])
+
+      useEffect(() => {
+        if (tab === 'scripts' && !scripts) loadScripts()
+      }, [tab, scripts, loadScripts])
+
+      const patchScene = (idx, patch) => {
+        setScripts((prev) => {
+          if (!prev) return prev
+          const scenes = prev.scenes.map((s, i) => (i === idx ? { ...s, ...patch } : s))
+          return { ...prev, scenes }
+        })
+      }
+
+      const saveScripts = async () => {
+        if (!scripts) return
+        setBusy(true)
+        const r = await api('/api/scripts', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(scripts),
+        })
+        setBusy(false)
+        if (r && r.ok) {
+          setScripts(r.scripts)
+          setScriptsMsg('已保存' + ((r.warnings && r.warnings.length) ? ('（' + r.warnings.length + ' 条提醒）') : ''))
+        } else {
+          setScriptsMsg('保存失败：' + ((r && ((r.errors && r.errors[0]) || r.error)) || ''))
+        }
+        setTimeout(() => setScriptsMsg(''), 4000)
+      }
 
       const save = async (override) => {
         const f = override || form
@@ -273,6 +312,7 @@
           h('div', { className: 'xhs-tab ' + (tab === 'main' ? 'on' : ''), onClick: () => setTab('main') }, '主控'),
           h('div', { className: 'xhs-tab ' + (tab === 'drafts' ? 'on' : ''), onClick: () => setTab('drafts') },
             (st.requireApproval === false ? '回复记录' : '回复清单') + ' (' + drafts.length + ')'),
+          h('div', { className: 'xhs-tab ' + (tab === 'scripts' ? 'on' : ''), onClick: () => setTab('scripts') }, '话术库'),
           h('div', { className: 'xhs-tab ' + (tab === 'rules' ? 'on' : ''), onClick: () => setTab('rules') }, '规则'),
         ),
 
@@ -305,6 +345,45 @@
               h('span', null, '演练模式：只生成草稿，不向平台发送')),
             h('div', { className: 'xhs-mut', style: { marginTop: 6 } }, '演练模式优先级最高：开启时任何发送动作（含人工复核）都会被拦截。'),
           ),
+        ) : null,
+
+        tab === 'scripts' ? h('div', { className: 'xhs-card' },
+          h('div', { className: 'xhs-row' },
+            h('span', { className: 'xhs-mut' }, scripts
+              ? ((scripts.scenes || []).length + ' 个场景 · 上限 ' + ((scripts.global || {}).max_chars || '?') + ' 字')
+              : '加载中…'),
+            h('div', { className: 'xhs-sp' }),
+            h('button', { className: 'xhs-btn', onClick: loadScripts, disabled: busy }, '刷新'),
+            h('button', { className: 'xhs-btn primary', onClick: saveScripts, disabled: busy || !scripts }, '保存'),
+          ),
+          scriptsMsg ? h('div', { className: 'xhs-mut', style: { marginTop: 6 } }, scriptsMsg) : null,
+          h('div', { className: 'xhs-mut', style: { marginTop: 6 } },
+            '一条评论先按触发词归场景，再从该场景话术里挑一条；同一句不会重复用。发送前统一过合规闸。'),
+          ((scripts && scripts.scenes) || []).map((s, i) => h('div', {
+            key: s.id,
+            style: { marginTop: 12, paddingTop: 10, borderTop: '1px solid rgba(127,127,127,.25)' },
+          },
+          h('div', { className: 'xhs-row' },
+            h('input', { type: 'checkbox', checked: s.enabled !== false, onChange: (e) => patchScene(i, { enabled: e.target.checked }) }),
+            h('span', null, s.name),
+            h('span', { className: 'xhs-chip' }, s.mode),
+            h('span', { className: 'xhs-chip' }, ((s.templates || []).length) + ' 条'),
+          ),
+          h('label', { className: 'xhs-label' }, '触发词（回车添加）'),
+          h(ChipField, {
+            value: (s.match && s.match.any) || [],
+            placeholder: '大小脸',
+            onChange: (v) => patchScene(i, { match: { ...(s.match || {}), any: v } }),
+          }),
+          h('label', { className: 'xhs-label' }, '话术池（一行一条）'),
+          h('textarea', {
+            className: 'xhs-area',
+            style: { minHeight: 110 },
+            value: (s.templates || []).join('\n'),
+            onChange: (e) => patchScene(i, { templates: e.target.value.split('\n') }),
+          }),
+          s.notes ? h('div', { className: 'xhs-mut' }, s.notes) : null,
+          ))
         ) : null,
 
         tab === 'rules' ? h('div', { className: 'xhs-card' },

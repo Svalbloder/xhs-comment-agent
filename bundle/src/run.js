@@ -10,12 +10,19 @@
  *
  * token 用量来自 llm 流里的 { type:'usage' } chunk，是真实值，不做估算。
  */
+import { matchScene, pickTemplate, checkReply, styleSamples } from './scripts.js'
+
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
 export const STOP = Symbol('xhs-stop')
 
 export function createRunner(deps) {
   const { api, getRules, llm, onDraft, send, log, state, persist, requireApproval, onUsage, control } = deps
+
+  // 话术库每次现读：改 scripts.json 不用重启
+  const readScripts = () => {
+    try { return deps.getScripts ? deps.getScripts() : null } catch (e) { log(`scripts load failed: ${e?.message ?? e}`); return null }
+  }
 
   const now = () => new Date().toISOString()
   const errMsg = (e) => String((e && e.message) || e)
@@ -46,6 +53,19 @@ export function createRunner(deps) {
     const cut = Date.now() - SEEN_TTL_MS
     for (const [k, v] of Object.entries(m)) {
       if (new Date(v).getTime() < cut) delete m[k]
+    }
+  }
+
+  // 记住刚生成的回复：用于相似度去重与模板轮换
+  const rememberReply = (text, templateKey) => {
+    const arr = Array.isArray(state.recentReplies) ? state.recentReplies : (state.recentReplies = [])
+    arr.push(text)
+    const win = Number(readScripts()?.global?.recent_window ?? 30)
+    while (arr.length > Math.max(5, win)) arr.shift()
+    if (templateKey) {
+      if (!state.templateUsage || typeof state.templateUsage !== 'object') state.templateUsage = {}
+      const cur = state.templateUsage[templateKey] ?? { count: 0, lastUsed: 0 }
+      state.templateUsage[templateKey] = { count: Number(cur.count ?? 0) + 1, lastUsed: Date.now() }
     }
   }
 
@@ -112,13 +132,22 @@ export function createRunner(deps) {
     }))
   }
 
-  async function generateReply(note, comment, rules) {
+  async function generateReply(note, comment, rules, scene = null) {
     const rs = rules.reply_style ?? {}
+    const samples = scene ? styleSamples(scene, 3) : []
+    const maxChars = scene
+      ? Number(readScripts()?.global?.max_chars ?? rs.max_chars ?? 120)
+      : (rs.max_chars ?? 60)
+
     const system = [
       '你在小红书评论区回复别人，像一个真实用户。',
       rs.tone ? `语气要求：${rs.tone}` : '语气：自然、简短、像人说话，不推销。',
-      `硬性要求：不超过 ${rs.max_chars ?? 60} 个汉字；不要链接、不要联系方式、不要报价。`,
+      `硬性要求：不超过 ${maxChars} 个汉字；不要链接、不要联系方式、不要报价。`,
+      '不许做诊断结论、不许承诺疗效、不许提机构或医生姓名。',
       rs.banned_words?.length ? `禁止出现这些词：${rs.banned_words.join('、')}` : '',
+      samples.length
+        ? `下面是同类真实用户在这种笔记下的说法，只学语气和角度，不要照抄原句：\n- ${samples.join('\n- ')}`
+        : '',
       rs.example_good?.length ? `正面示例：\n- ${rs.example_good.join('\n- ')}` : '',
       rs.example_bad?.length ? `绝对不要这样写：\n- ${rs.example_bad.join('\n- ')}` : '',
       '只输出回复正文，不要引号、不要解释。',
@@ -127,9 +156,10 @@ export function createRunner(deps) {
     const user = [
       `笔记标题：${note.title}`,
       `对方评论：${comment.content}`,
+      scene ? `评论类型：${scene.name}` : '',
       comment.level === 2 ? '（这是二级回复，回复时对他/她说话）' : '（这是一级评论）',
       '写一条回复。',
-    ].join('\n')
+    ].filter(Boolean).join('\n')
 
     const parts = []
     const cfg = deps.llmConfig?.() ?? {}
@@ -151,6 +181,7 @@ export function createRunner(deps) {
   /** 跑一轮：搜索 → 逐篇抓评论 → 按规则筛 → 生成草稿（审核模式下不发送）。 */
   async function runCycle(cycleNo) {
     const rules = getRules()
+    const scriptsLib = readScripts()
     const keywords = (rules.keywords ?? []).filter(Boolean).slice(0, 3)
     if (!keywords.length) throw new Error('先在「规则」里填搜索关键词')
 
@@ -209,12 +240,28 @@ export function createRunner(deps) {
       patch({ candidates: (state.job?.candidates ?? 0) + cands.length })
 
       let used = 0
+      const usedByScene = {}
       for (const c of cands) {
         if (used >= maxPerNote) break
         await control.checkpoint()
         if (seenHit(c.commentId)) {
           patch({ skippedSeen: (state.job?.skippedSeen ?? 0) + 1 })
           continue
+        }
+
+        // ---- 意图路由：先判断这条评论属于哪个场景 ----
+        let scene = null
+        if (scriptsLib) {
+          scene = matchScene(scriptsLib, c.content)
+          if (!scene) {
+            patch({ skippedNoScene: (state.job?.skippedNoScene ?? 0) + 1 })
+            continue
+          }
+          const perNote = num(scene.rules?.per_note, 1, 50, 2)
+          if ((usedByScene[scene.id] ?? 0) >= perNote) {
+            patch({ skippedSceneQuota: (state.job?.skippedSceneQuota ?? 0) + 1 })
+            continue
+          }
         }
 
         patch({
@@ -224,13 +271,27 @@ export function createRunner(deps) {
             noteTitle: note.title,
             commentUser: c.user,
             commentText: String(c.content).slice(0, 60),
+            sceneName: scene?.name ?? '',
             cycle: cycleNo,
           },
         })
 
-        let text
+        let text = ''
+        let meta = {}
         try {
-          text = await generateReply(note, c, rules)
+          if (scene && scene.mode === 'template') {
+            const pick = pickTemplate(scriptsLib, scene, state.recentReplies ?? [], state.templateUsage ?? {})
+            if (!pick) {
+              // 该场景的话术最近都用过，宁可不回也不复读
+              patch({ skippedRepeat: (state.job?.skippedRepeat ?? 0) + 1 })
+              continue
+            }
+            text = pick.text
+            meta = { sceneId: scene.id, sceneName: scene.name, templateKey: pick.key }
+          } else {
+            text = await generateReply(note, c, rules, scene)
+            meta = scene ? { sceneId: scene.id, sceneName: scene.name } : {}
+          }
         } catch (e) {
           addError(`生成文案失败：${errMsg(e)}`)
           continue
@@ -238,9 +299,20 @@ export function createRunner(deps) {
 
         const rs = rules.reply_style ?? {}
         if (!text) { addError('模型返回空文案'); continue }
-        if (text.length > (rs.max_chars ?? 60)) { addError(`文案超长(${text.length}): ${text.slice(0, 20)}…`); continue }
-        const hitWord = (rs.banned_words ?? []).find((w) => w && text.includes(w))
-        if (hitWord) { addError(`文案含禁用词「${hitWord}」`); continue }
+
+        // ---- 合规闸：话术库启用时用脚本库的全局规则，否则退回旧规则 ----
+        if (scriptsLib) {
+          const bad = checkReply(text, scriptsLib, state.recentReplies ?? [])
+          if (bad) {
+            patch({ blocked: (state.job?.blocked ?? 0) + 1 })
+            addError(`合规拦截（${bad.blocked}）：${bad.detail}`)
+            continue
+          }
+        } else {
+          if (text.length > (rs.max_chars ?? 60)) { addError(`文案超长(${text.length}): ${text.slice(0, 20)}…`); continue }
+          const hitWord = (rs.banned_words ?? []).find((w) => w && text.includes(w))
+          if (hitWord) { addError(`文案含禁用词「${hitWord}」`); continue }
+        }
 
         const draft = {
           feedId: note.feedId,
@@ -251,9 +323,12 @@ export function createRunner(deps) {
           createdAt: now(),
           jobId: state.job?.id ?? '',
           cycle: cycleNo,
+          ...meta,
         }
         onDraft(draft)
         seenMark(c.commentId)
+        rememberReply(text, meta.templateKey)
+        usedByScene[scene?.id ?? ''] = (usedByScene[scene?.id ?? ''] ?? 0) + 1
         patch({
           drafted: (state.job?.drafted ?? 0) + 1,
           current: { ...(state.job?.current ?? {}), action: 'drafted', replyText: text.slice(0, 60) },
@@ -297,6 +372,10 @@ export function createRunner(deps) {
       drafted: 0,
       sent: 0,
       skippedSeen: 0,
+      skippedNoScene: 0,
+      skippedRepeat: 0,
+      skippedSceneQuota: 0,
+      blocked: 0,
       errors: [],
       tokens: { input: 0, output: 0, total: 0, calls: 0 },
       startedAt: now(),

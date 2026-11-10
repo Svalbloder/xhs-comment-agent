@@ -14,8 +14,10 @@ import { createHash, randomBytes } from 'node:crypto'
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { startPanel } from './panel.js'
 import { createRunner, STOP } from './run.js'
+import { validateScripts } from './scripts.js'
 
 // 不 import 任何 @deepseek-ai/* ：本插件通过 profile 补丁以「绝对路径」加载，
 // 那种加载方式下裸导入会从插件目录向上找 node_modules，必然解析失败。
@@ -91,6 +93,51 @@ function applyInner(ctx, config = {}) {
     return t
   })()
 
+  // 话术库：首次从 bundle 自带的默认库播种到状态目录，之后只读用户这份
+  // 注意：这里不能用下面的 log()，它在更后面才定义（TDZ）
+  const safeLog = (m) => {
+    try { appendFileSync(logPath, `${new Date().toISOString()} ${m}\n`) } catch { /* ignore */ }
+  }
+  const scriptsPath = join(stateDir, 'scripts.json')
+  const defaultScriptsPath = fileURLToPath(new URL('./scripts.default.json', import.meta.url))
+  const seedScripts = () => {
+    try {
+      if (existsSync(scriptsPath)) return
+      writeFileSync(scriptsPath, readFileSync(defaultScriptsPath, 'utf8'), 'utf8')
+      safeLog('scripts seeded from default')
+    } catch (e) {
+      safeLog(`scripts seed failed: ${e?.message ?? e}`)
+    }
+  }
+
+  const getScripts = () => {
+    try {
+      if (!existsSync(scriptsPath)) return null
+      const raw = JSON.parse(readFileSync(scriptsPath, 'utf8'))
+      const v = validateScripts(raw)
+      if (!v.ok) safeLog(`scripts invalid: ${v.errors.join('; ')}`)
+      return v.lib
+    } catch (e) {
+      safeLog(`scripts load failed: ${e?.message ?? e}`)
+      return null
+    }
+  }
+
+  const saveScripts = (raw) => {
+    const v = validateScripts(raw)
+    if (!v.ok) return { ok: false, errors: v.errors, warnings: v.warnings }
+    try {
+      if (existsSync(scriptsPath)) {
+        writeFileSync(`${scriptsPath}.bak-${Date.now()}`, readFileSync(scriptsPath))
+      }
+      writeFileSync(scriptsPath, JSON.stringify(v.lib, null, 2), 'utf8')
+      return { ok: true, warnings: v.warnings, scripts: v.lib }
+    } catch (e) {
+      return { ok: false, errors: [String(e?.message ?? e)] }
+    }
+  }
+
+
   // 规则每次调用现读：改 rules.json 立即生效，不需要重启 DSH。
   const getRules = () => {
     try {
@@ -162,6 +209,9 @@ function applyInner(ctx, config = {}) {
   const log = (msg) => {
     try { appendFileSync(logPath, `${new Date().toISOString()} ${msg}\n`) } catch { /* ignore */ }
   }
+
+  // 首次运行把默认话术库播种到状态目录（此时 log 已就绪）
+  seedScripts()
 
   let child = null
   let starting = null
@@ -572,6 +622,7 @@ function applyInner(ctx, config = {}) {
       checkpoint: () => control.checkpoint(),
     },
     onUsage: (u) => addUsage(u),
+    getScripts: () => getScripts(),
   })
 
   let running = false
@@ -674,6 +725,9 @@ function applyInner(ctx, config = {}) {
         rulesPath,
         statePath,
         draftsPath,
+        scriptsPath,
+        getScripts: () => getScripts(),
+        saveScripts: (raw) => saveScripts(raw),
         getStatus: async () => {
           const ready = await ensureService()
           let login = null

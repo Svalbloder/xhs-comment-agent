@@ -147,6 +147,30 @@
 
   <div class="card">
     <div class="flex">
+      <strong>话术库</strong>
+      <span class="hint" id="scriptsMeta">加载中…</span>
+      <div class="sp"></div>
+      <button class="ghost small" onclick="loadScripts()">刷新</button>
+      <button class="ghost small" onclick="exportScripts()">导出 JSON</button>
+      <button class="small" onclick="saveScripts()">保存话术库</button>
+    </div>
+    <div class="hint" style="margin-top:6px">
+      一条评论先按「触发词」归到某个场景，再从该场景的话术里挑一条；同一句话不会重复用。
+      发送前统一过合规闸：字数、禁用词、联系方式、报价、与最近回复的相似度。
+    </div>
+    <div id="scriptsBox" style="margin-top:12px"></div>
+    <details style="margin-top:12px">
+      <summary class="hint" style="cursor:pointer">粘贴 JSON 覆盖（产品方更新话术时用）</summary>
+      <textarea id="scriptsJson" style="min-height:160px;margin-top:8px" placeholder="把完整的 scripts.json 内容粘到这里，再点「导入覆盖」"></textarea>
+      <div class="flex" style="margin-top:8px">
+        <button class="ghost small" onclick="importScriptsJson()">导入覆盖</button>
+        <span class="hint">导入前会自动备份现有话术库</span>
+      </div>
+    </details>
+  </div>
+
+  <div class="card">
+    <div class="flex">
       <strong>待审草稿</strong>
       <span class="hint" id="draftCount"></span>
       <div class="sp"></div>
@@ -409,6 +433,123 @@ async function poll(){
   }catch(e){ /* 面板重启中，忽略这一拍 */ }
 }
 
-load(); setInterval(load, 15000); setInterval(poll, 2500)
+/* ---------- 话术库 ---------- */
+let SCRIPTS = null
+
+async function loadScripts(){
+  try{
+    const r = await fetch('/api/scripts')
+    const j = await r.json()
+    SCRIPTS = j.scripts
+    renderScripts(j.path)
+  }catch(e){ $('scriptsMeta').textContent = '加载失败' }
+}
+
+function renderScripts(path){
+  if(!SCRIPTS || !SCRIPTS.scenes){
+    $('scriptsMeta').textContent = '没有可用的话术库'
+    $('scriptsBox').innerHTML = ''
+    return
+  }
+  const g = SCRIPTS.global || {}
+  $('scriptsMeta').textContent = (SCRIPTS.scenes.length || 0) + ' 个场景 · 上限 ' + (g.max_chars || '?') +
+    ' 字 · 相似度阈值 ' + Math.round((g.min_similarity_gap || 0) * 100) + '%'
+
+  let html = '<div class="hint" style="margin-bottom:8px">合规闸：' +
+    (g.no_contact !== false ? '禁联系方式 ' : '') +
+    (g.no_price !== false ? '禁报价 ' : '') +
+    (g.banned_words && g.banned_words.length ? '禁用词 ' + g.banned_words.length + ' 个' : '') +
+    '</div>'
+
+  for(const s of SCRIPTS.scenes){
+    html += '<div class="draft" data-scene="' + esc(s.id) + '">' +
+      '<div class="flex">' +
+        '<input type="checkbox" data-f="enabled" style="width:auto"' + (s.enabled !== false ? ' checked' : '') + '>' +
+        '<strong>' + esc(s.name) + '</strong>' +
+        '<span class="pill">' + esc(s.mode) + '</span>' +
+        '<span class="pill">' + (s.templates || []).length + ' 条</span>' +
+        '<div class="sp"></div>' +
+        '<span class="hint">优先级</span>' +
+        '<input type="number" data-f="priority" value="' + (s.priority || 0) + '" style="width:80px">' +
+      '</div>' +
+      '<label>触发词（逗号分隔，命中就归到这个场景）</label>' +
+      '<input data-f="match" value="' + esc((s.match && s.match.any || []).join('，')) + '">' +
+      '<label>话术池（一行一条）</label>' +
+      '<textarea data-f="templates" style="min-height:110px">' + esc((s.templates || []).join('\n')) + '</textarea>' +
+      (s.notes ? '<div class="hint">' + esc(s.notes) + '</div>' : '') +
+      '</div>'
+  }
+  $('scriptsBox').innerHTML = html
+}
+
+function collectScripts(){
+  const lib = JSON.parse(JSON.stringify(SCRIPTS))
+  lib.scenes = (lib.scenes || []).map(function(s){
+    const box = document.querySelector('[data-scene="' + s.id + '"]')
+    if(!box) return s
+    const matchRaw = box.querySelector('[data-f="match"]').value
+    const tplRaw = box.querySelector('[data-f="templates"]').value
+    return Object.assign({}, s, {
+      enabled: box.querySelector('[data-f="enabled"]').checked,
+      priority: +box.querySelector('[data-f="priority"]').value || 0,
+      match: Object.assign({}, s.match, {
+        any: matchRaw.split(/[,，\n]/).map(function(x){ return x.trim() }).filter(Boolean)
+      }),
+      templates: tplRaw.split('\n').map(function(x){ return x.trim() }).filter(Boolean)
+    })
+  })
+  return lib
+}
+
+async function saveScripts(){
+  if(!SCRIPTS){ toast('话术库还没加载'); return }
+  const r = await fetch('/api/scripts', {
+    method:'POST', headers:{'content-type':'application/json'},
+    body: JSON.stringify(collectScripts())
+  })
+  const j = await r.json()
+  if(!j.ok){
+    const msg = (j.errors && j.errors.length) ? j.errors.join('；') : '保存失败'
+    toast(msg.slice(0, 120))
+    return
+  }
+  SCRIPTS = j.scripts
+  renderScripts()
+  const w = (j.warnings && j.warnings.length) ? ('（' + j.warnings.length + ' 条提醒，详见控制台）') : ''
+  toast('话术库已保存' + w)
+  if(j.warnings && j.warnings.length) console.warn('[话术库提醒]', j.warnings)
+}
+
+function exportScripts(){
+  if(!SCRIPTS){ toast('话术库还没加载'); return }
+  const data = JSON.stringify(collectScripts(), null, 2)
+  const a = document.createElement('a')
+  a.href = URL.createObjectURL(new Blob([data], { type: 'application/json' }))
+  a.download = 'scripts.json'
+  a.click()
+  setTimeout(function(){ URL.revokeObjectURL(a.href) }, 1000)
+}
+
+async function importScriptsJson(){
+  const raw = $('scriptsJson').value.trim()
+  if(!raw){ toast('先把 JSON 粘进来'); return }
+  let parsed
+  try { parsed = JSON.parse(raw) } catch(e){ toast('JSON 解析失败：' + e.message); return }
+  const r = await fetch('/api/scripts', {
+    method:'POST', headers:{'content-type':'application/json'},
+    body: JSON.stringify(parsed)
+  })
+  const j = await r.json()
+  if(!j.ok){
+    toast(((j.errors || ['导入失败']).join('；')).slice(0, 120))
+    return
+  }
+  SCRIPTS = j.scripts
+  renderScripts()
+  $('scriptsJson').value = ''
+  toast('已导入并备份旧版本')
+}
+
+load(); setInterval(load, 15000); setInterval(poll, 2500); loadScripts()
 </script>
 </body></html>

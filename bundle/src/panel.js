@@ -25,6 +25,9 @@ export function startPanel(opts) {
     rulesPath,
     statePath,
     draftsPath,
+    scriptsPath,
+    getScripts,
+    saveScripts,
     getStatus,
     run,
     control,
@@ -142,6 +145,20 @@ export function startPanel(opts) {
           drafts: readDrafts(),
           local: isLocal(req),
         })
+      }
+
+      // 话术库：读 / 存。改话术属于高风险（直接决定发出去的话），只允许本机
+      if (req.method === 'GET' && url.pathname === '/api/scripts') {
+        return json(res, 200, { ok: true, scripts: getScripts ? getScripts() : null, path: scriptsPath })
+      }
+
+      if (req.method === 'POST' && url.pathname === '/api/scripts') {
+        if (!isLocal(req)) {
+          return json(res, 403, { ok: false, blocked: 'local_only', error: '话术库只能在电脑上修改' })
+        }
+        const body = await readBody(req)
+        const r = await saveScripts(body?.scripts ?? body)
+        return json(res, r?.ok ? 200 : 400, r ?? { ok: false })
       }
 
       // 「开始 / 测试」：立刻返回，任务在后台跑，前端轮询 /api/state 里的 job
