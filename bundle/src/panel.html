@@ -88,6 +88,7 @@
       <button id="btnResume" class="ghost" onclick="ctrl('resume')">继续</button>
       <button id="btnStop" class="ghost" onclick="ctrl('stop')">终止</button>
     </div>
+    <div id="sendGuardWarn" class="hint" style="margin-top:10px;display:none;color:var(--warn)"></div>
     <div style="margin-top:14px;padding-top:12px;border-top:1px solid #262b36">
       <label style="display:block;color:var(--fg);margin-bottom:2px">发送管控</label>
       <label class="flex" style="margin-top:8px">
@@ -462,6 +463,19 @@ function renderControl(st){
   if ($('btnPause')) $('btnPause').disabled = !running || paused
   if ($('btnResume')) $('btnResume').disabled = !paused
   if ($('btnStop')) $('btnStop').disabled = !running
+
+  const guard = $('sendGuardWarn')
+  if (guard) {
+    if (st.requireApproval === false) {
+      guard.style.display = 'block'
+      guard.textContent = st.dryRun === false
+        ? '⚠ 人工复核与演练模式都已关闭：生成的回复会直接发到小红书。'
+        : '提醒：人工复核已关闭（演练模式仍开着，不会真发）。'
+    } else {
+      guard.style.display = 'none'
+      guard.textContent = ''
+    }
+  }
 }
 
 async function runNow(mode){

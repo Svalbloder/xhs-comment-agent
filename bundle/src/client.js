@@ -63,7 +63,7 @@
 
   function makePanel(React) {
     const h = React.createElement
-    const { useCallback, useEffect, useState } = React
+    const { useCallback, useEffect, useRef, useState } = React
   const PHASE_LABEL = { searching: '搜索中', collecting: '抓评论', sending: '发送中', done: '完成', error: '出错' }
   const fmt = (n) => Number(n || 0).toLocaleString('zh-CN')
   function statusLabel(job) {
@@ -185,26 +185,38 @@
       const [busy, setBusy] = useState(false)
       const [scripts, setScripts] = useState(null)
       const [scriptsMsg, setScriptsMsg] = useState('')
+      // 刚改过开关的时间戳：3 秒内不拿服务端值覆盖，避免"刚点就被回滚"的抖动
+      const lastEditRef = useRef(0)
 
       const load = useCallback(async () => {
         const s = await api('/api/state')
         if (!s || !s.status) return
         setState(s)
-        setForm((prev) => prev ?? {
-          keywords: (s.rules.keywords || []).slice(),
-          require_approval: s.status.requireApproval !== false,
-          must_any: (((s.rules.comment_gate || {}).must_any) || []).slice(),
-          must_not: (((s.rules.comment_gate || {}).must_not) || []).slice(),
-          max_len: (s.rules.comment_gate || {}).max_len ?? 120,
-          max_per_note: (s.rules.reply_policy || {}).max_per_note ?? 2,
-          hourly_quota: (s.rules.reply_policy || {}).hourly_quota ?? 5,
-          daily_quota: (s.rules.reply_policy || {}).daily_quota ?? 20,
-          min_interval_sec: (s.rules.reply_policy || {}).min_interval_sec ?? 45,
-          cycle_interval_sec: (s.rules.reply_policy || {}).cycle_interval_sec ?? 60,
-          max_notes_per_cycle: (s.rules.reply_policy || {}).max_notes_per_cycle ?? 6,
-          max_chars: (s.rules.reply_style || {}).max_chars ?? 60,
-          banned_words: (((s.rules.reply_style || {}).banned_words) || []).slice(),
-          dry_run: !!(s.rules.dry_run ?? s.status.dryRun),
+        const srvApproval = s.status.requireApproval !== false
+        const srvDry = !!(s.rules.dry_run ?? s.status.dryRun)
+        setForm((prev) => {
+          if (!prev) {
+            return {
+              keywords: (s.rules.keywords || []).slice(),
+              require_approval: srvApproval,
+              must_any: (((s.rules.comment_gate || {}).must_any) || []).slice(),
+              must_not: (((s.rules.comment_gate || {}).must_not) || []).slice(),
+              max_len: (s.rules.comment_gate || {}).max_len ?? 120,
+              max_per_note: (s.rules.reply_policy || {}).max_per_note ?? 2,
+              hourly_quota: (s.rules.reply_policy || {}).hourly_quota ?? 5,
+              daily_quota: (s.rules.reply_policy || {}).daily_quota ?? 20,
+              min_interval_sec: (s.rules.reply_policy || {}).min_interval_sec ?? 45,
+              cycle_interval_sec: (s.rules.reply_policy || {}).cycle_interval_sec ?? 60,
+              max_notes_per_cycle: (s.rules.reply_policy || {}).max_notes_per_cycle ?? 6,
+              max_chars: (s.rules.reply_style || {}).max_chars ?? 60,
+              banned_words: (((s.rules.reply_style || {}).banned_words) || []).slice(),
+              dry_run: srvDry,
+            }
+          }
+          // 两个开关以服务端为准（面板 / 别的窗口改了也要同步过来），刚点过的除外
+          if (Date.now() - lastEditRef.current < 3000) return prev
+          if (prev.require_approval === srvApproval && prev.dry_run === srvDry) return prev
+          return { ...prev, require_approval: srvApproval, dry_run: srvDry }
         })
       }, [])
 
@@ -268,6 +280,7 @@
       }
 
       const toggleSetting = (key, value) => {
+        lastEditRef.current = Date.now()
         const next = { ...form, [key]: value }
         setForm(next)
         save(next)
@@ -408,6 +421,12 @@
             h('button', { className: 'xhs-btn', disabled: !st.running, onClick: () => ctrl('stop') }, '终止'),
           ),
           h('div', { className: 'xhs-mut', style: { marginTop: 8 } }, '「开始」会一轮接一轮持续跑，直到点「终止」。'),
+          st.requireApproval === false
+            ? h('div', { className: 'xhs-warn', style: { marginTop: 8 } },
+              st.dryRun === false
+                ? '⚠ 人工复核与演练模式都已关闭：生成的回复会直接发到小红书。'
+                : '提醒：人工复核已关闭（演练模式仍开着，不会真发）。')
+            : null,
           h('div', { style: { marginTop: 14, paddingTop: 12, borderTop: '1px solid rgba(127,127,127,.25)' } },
             h('div', { className: 'xhs-label', style: { marginTop: 0 } }, '发送管控'),
             h('label', { className: 'xhs-row' },
@@ -525,6 +544,7 @@
               d,
               busy,
               canApprove: st.requireApproval !== false,
+              dryRun: st.dryRun !== false,
               onSend: send,
               onSkip: skip,
               color: d.__color,
@@ -536,7 +556,7 @@
     }
 
     function DraftItem(props) {
-      const { d, busy, canApprove, onSend, onSkip, color, waveIdx } = props
+      const { d, busy, canApprove, dryRun, onSend, onSkip, color, waveIdx } = props
       const [text, setText] = useState(d.replyText || '')
       return h('div', {
         className: 'xhs-card',
@@ -558,7 +578,9 @@
         h('div', { className: 'xhs-row', style: { marginTop: 6 } },
           canApprove
             ? h('button', { className: 'xhs-btn primary', disabled: busy || d.sent, onClick: () => onSend(d, text) }, '发送这条')
-            : h('span', { className: 'xhs-mut' }, d.sent ? '已自动发送' : '自动模式：无需审核'),
+            : h('span', { className: 'xhs-mut' }, d.sent
+              ? '已自动发送'
+              : (dryRun ? '人工复核已关闭（当前演练模式，不会真发）' : '人工复核已关闭：生成后直接发送')),
           canApprove ? h('button', { className: 'xhs-btn', disabled: busy, onClick: () => onSkip(d) }, '跳过') : null,
         ),
       )
