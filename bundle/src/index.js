@@ -262,12 +262,15 @@ function applyInner(ctx, config = {}) {
     const rules = getRules()
     const rs = rules.reply_style ?? {}
 
-    // 0) 配额与去重：之前只有工具/面板路径调 guard()，自动发送这条线绕过了它，
+    // 0) 演练模式是最高优先级：开着就绝不真发（之前这里漏了，只有面板/工具路径拦）
+    if (effDryRun()) return { ok: false, blocked: 'dry_run_on' }
+
+    // 1) 配额与去重：之前只有工具/面板路径调 guard()，自动发送这条线绕过了它，
     //    导致可以连发、无视最小间隔和日限额。统一收到这里。
     const blocked = guard(String(commentId))
     if (blocked) return { ok: false, blocked }
 
-    // 1) 禁用词：客户在 Excel 里填的，必须真的执行
+    // 2) 禁用词：客户在 Excel 里填的，必须真的执行
     for (const w of rs.banned_words ?? []) {
       if (w && String(text).includes(w)) {
         return { ok: false, blocked: 'banned_word', word: w, hint: `回复里出现了禁用词「${w}」` }
@@ -602,6 +605,8 @@ function applyInner(ctx, config = {}) {
     },
     onUsage: (u) => addUsage(u),
     getScripts: () => getScripts(),
+    // 自动发送前先探一次配额：返回 null(可发) 或 'hourly_quota' / 'daily_quota' / 'cooldown:32s'
+    quotaCheck: () => guard(`__probe_${Date.now()}`),
   })
 
   let running = false

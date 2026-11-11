@@ -394,6 +394,18 @@ export function createRunner(deps) {
 
         // 人工复核关闭时才自动发；开启时草稿停在清单里等人点
         if (!requireApproval()) {
+          // 发之前先问一次配额：发满了就别一条条试，直接停，只记一条错误
+          const gate = deps.quotaCheck ? deps.quotaCheck() : null
+          if (gate) {
+            const isCool = String(gate).startsWith('cooldown')
+            addError(isCool ? `发送太频繁：${String(gate).split(':')[1] || ''}` : '本小时/今日配额已用尽，已停止自动发送', {
+              code: isCool ? 'cooldown' : 'quota',
+              noteTitle: note.title,
+            })
+            patch({ phase: 'quota-exhausted', current: null })
+            return { quotaHit: true }
+          }
+
           await control.checkpoint()
           patch({ phase: 'sending' })
           const r = await send({ feedId: note.feedId, xsecToken: note.xsecToken, commentId: c.commentId, text })
@@ -406,6 +418,11 @@ export function createRunner(deps) {
               user: c.user,
               commentId: c.commentId,
             })
+            // 配额/冷却类错误：这一轮不用再试了
+            if (info.code === 'quota' || info.code === 'cooldown') {
+              patch({ phase: 'quota-exhausted', current: null })
+              return { quotaHit: true }
+            }
           }
           await sleep(1500)
         }
@@ -455,7 +472,14 @@ export function createRunner(deps) {
       do {
         state.job.cycles = (state.job.cycles ?? 0) + 1
         patch({ phase: 'cycle-start' })
-        await runCycle(state.job.cycles)
+        const cycleResult = await runCycle(state.job.cycles)
+
+        // 配额用尽：别再空转，直接结束整个任务
+        if (cycleResult && cycleResult.quotaHit) {
+          patch({ status: 'done', phase: 'quota-exhausted', current: null, finishedAt: now() })
+          log(`run finished: quota exhausted (cycles=${state.job.cycles})`)
+          return
+        }
 
         if (mode === 'once') break
 

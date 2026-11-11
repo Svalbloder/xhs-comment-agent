@@ -550,11 +550,13 @@ function renderControl(st){
     else if (s === 'error') { label = '出错'; cls = 'bad' }
   }
   if (paused) label = '已暂停'
+  if (job && job.phase === 'quota-exhausted') { label = '配额用尽'; cls = 'warn' }
   if ($('runState')) { $('runState').textContent = label; $('runState').className = 'pill ' + cls }
 
   let what = '还没跑过'
   const cur = job && job.current
-  if (cur && ACTION_DESC[cur.action]) what = ACTION_DESC[cur.action](cur)
+  if (job && job.phase === 'quota-exhausted') what = '本小时或今日配额已用尽，已停止自动发送'
+  else if (cur && ACTION_DESC[cur.action]) what = ACTION_DESC[cur.action](cur)
   else if (job && job.status === 'done') what = '这一轮已结束'
   else if (job && job.status === 'stopped') what = '已终止'
   if ($('runNowText')) $('runNowText').textContent = what

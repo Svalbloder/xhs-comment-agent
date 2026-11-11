@@ -73,6 +73,7 @@
   const fmt = (n) => Number(n || 0).toLocaleString('zh-CN')
   function statusLabel(job) {
     if (!job) return '空闲'
+    if (job.phase === 'quota-exhausted') return '配额用尽'
     const s = job.status
     if (s === 'running') return '运行中'
     if (s === 'paused') return '已暂停'
@@ -89,6 +90,7 @@
     return ''
   }
   function describeNow(job) {
+    if (job && job.phase === 'quota-exhausted') return '本小时或今日配额已用尽，已停止自动发送'
     const c = job && job.current
     if (!c) {
       if (job && job.status === 'done') return '这一轮已结束'
