@@ -310,15 +310,24 @@ function applyInner(ctx, config = {}) {
       return { ok: true, repliedTo: commentId, quota: { day: state.dayCount, hour: state.hourCount } }
     } catch (e) {
       const msg = String(e?.message ?? e)
+      // sidecar 的错误体里通常带 details，剥出来给前端一句话说明
+      const detail = (() => {
+        const m = msg.match(/\{[\s\S]*\}\s*$/)
+        if (!m) return ''
+        try {
+          const j = JSON.parse(m[0])
+          return String(j.details || j.msg || j.message || j.error || '')
+        } catch { return '' }
+      })()
       if (/验证码|频繁|风控|滑块|未登录|login/i.test(msg)) {
         state.incidents.push({ at: new Date().toISOString(), reason: `HARD_STOP: ${msg}` })
         persist()
         log(`HARD_STOP ${msg}`)
-        return { ok: false, halted: true, reason: msg, next: '停止自动发送，人工确认账号状态后再恢复' }
+        return { ok: false, halted: true, reason: msg, detail, next: '停止自动发送，人工确认账号状态后再恢复' }
       }
       state.incidents.push({ at: new Date().toISOString(), reason: `send_failed: ${msg}` })
       persist()
-      return { ok: false, error: msg }
+      return { ok: false, error: msg, detail }
     }
   }
 

@@ -25,6 +25,25 @@
   .pill.ok{background:rgba(47,191,113,.15);color:var(--ok)}
   .pill.bad{background:rgba(255,46,77,.15);color:var(--acc)}
   .pill.warn{background:rgba(230,162,60,.15);color:var(--warn)}
+  .stats{display:flex;gap:8px;flex-wrap:wrap}
+  .stat{background:#12151c;border:1px solid var(--line);border-radius:9px;padding:7px 12px;min-width:76px;text-align:center}
+  .stat b{display:block;font-size:17px;line-height:1.25;color:var(--fg);font-variant-numeric:tabular-nums}
+  .stat span{font-size:11px;color:var(--mut)}
+  .stat.bad b{color:var(--acc)}
+  .errbox{border:1px solid var(--line);border-radius:9px;padding:8px 10px;background:#12151c}
+  .errbox summary{cursor:pointer;font-size:12px;color:var(--mut);list-style:none}
+  .errbox summary::-webkit-details-marker{display:none}
+  .errbox summary::before{content:'▸ ';color:var(--mut)}
+  .errbox[open] summary::before{content:'▾ '}
+  .err-row{display:grid;grid-template-columns:60px 76px 1fr;gap:8px;align-items:baseline;padding:5px 0;border-top:1px dashed #222836;font-size:12px}
+  .err-row:first-child{border-top:0}
+  .err-time{color:var(--mut);font-variant-numeric:tabular-nums}
+  .err-tag{font-size:11px;border-radius:999px;padding:1px 7px;justify-self:start;border:1px solid currentColor}
+  .err-tag.red{color:#ff6b81}
+  .err-tag.amber{color:var(--warn)}
+  .err-tag.gray{color:var(--mut)}
+  .err-msg{color:var(--fg)}
+  .err-ctx{grid-column:2 / 4;color:var(--mut);font-size:11px}
   button.pill{border:0;font:inherit;padding:2px 8px;border-radius:999px}
   .draft{border-top:1px solid var(--line);padding:12px 0}
   .draft:first-child{border-top:0}
@@ -79,8 +98,19 @@
       <span class="pill" id="runState">空闲</span>
     </div>
     <div class="hint" id="runNowText" style="margin-top:6px">还没跑过</div>
-    <div class="hint" id="runProgress" style="margin-top:2px"></div>
-    <div class="hint" id="runTokens" style="margin-top:2px"></div>
+    <div class="stats" style="margin-top:10px">
+      <div class="stat"><b id="stRound">0</b><span>轮次</span></div>
+      <div class="stat"><b id="stNotes">0/0</b><span>笔记</span></div>
+      <div class="stat"><b id="stCands">0</b><span>候选</span></div>
+      <div class="stat"><b id="stDrafts">0</b><span>草稿</span></div>
+      <div class="stat"><b id="stSent">0</b><span>已发</span></div>
+      <div class="stat" id="stErrBox"><b id="stErrors">0</b><span>错误</span></div>
+    </div>
+    <div class="hint" id="runTokens" style="margin-top:8px"></div>
+    <details class="errbox" id="errBox" style="margin-top:8px">
+      <summary>最近错误 <span id="errCount" class="pill">0</span></summary>
+      <div id="errList" style="margin-top:6px"></div>
+    </details>
     <div class="flex" style="margin-top:12px">
       <button id="btnStart" onclick="runNow('loop')">开始（持续跑）</button>
       <button id="btnOnce" class="ghost" onclick="runNow('once')">跑一轮</button>
@@ -443,6 +473,56 @@ const ACTION_DESC = {
 
 function fmtNum(n){ return Number(n || 0).toLocaleString('zh-CN') }
 
+const ERR_TAGS = {
+  reply_failed: ['平台拒绝', 'red'],
+  halted: ['已熔断', 'red'],
+  network: ['网络', 'red'],
+  too_long: ['文案超长', 'amber'],
+  banned_word: ['禁用词', 'amber'],
+  contact: ['联系方式', 'amber'],
+  price: ['报价', 'amber'],
+  too_similar: ['重复', 'amber'],
+  quota: ['配额', 'amber'],
+  cooldown: ['冷却', 'amber'],
+  dry_run: ['演练中', 'gray'],
+  need_approval: ['待批准', 'gray'],
+  already_sent: ['已回过的评论', 'gray'],
+  no_scene: ['无匹配场景', 'gray']
+}
+
+function errTag(code) { return ERR_TAGS[code] || [code || '错误', 'gray'] }
+
+// 旧数据里错误是整段 "HTTP 500 ...{json}"，这里把 details 抽出来只显示人话
+function cleanErrMsg(msg) {
+  const s = String(msg || '')
+  const m = s.match(/"details":"([^"]+)"/)
+  if (m) return m[1].replace(/\\"/g, '"')
+  const m2 = s.match(/^HTTP \d+ \S+:\s*(\{[\s\S]*\})$/)
+  if (m2) return '平台返回错误'
+  return s
+}
+
+function renderErrorList(job) {
+  const box = $('errList')
+  if (!box) return
+  const list = (job && Array.isArray(job.errors)) ? job.errors : []
+  if (!list.length) {
+    box.innerHTML = '<div class="hint">这次运行没有错误。</div>'
+    return
+  }
+  box.innerHTML = list.slice(-10).reverse().map(function(e){
+    const o = (typeof e === 'string') ? { message: e, at: '' } : e
+    const tag = errTag(o.code)
+    const ctx = [o.noteTitle ? ('《' + String(o.noteTitle).slice(0, 16) + '》') : '', o.user ? ('@' + o.user) : ''].filter(Boolean).join('  ')
+    return '<div class="err-row">' +
+      '<span class="err-time">' + esc(fmtTime(o.at)) + '</span>' +
+      '<span class="err-tag ' + tag[1] + '">' + esc(tag[0]) + '</span>' +
+      '<span class="err-msg">' + esc(cleanErrMsg(o.message)) + '</span>' +
+      (ctx ? '<span class="err-ctx">' + esc(ctx) + '</span>' : '') +
+      '</div>'
+  }).join('')
+}
+
 function renderControl(st){
   const job = st.job || null
   const running = !!st.running
@@ -467,13 +547,17 @@ function renderControl(st){
   else if (job && job.status === 'stopped') what = '已终止'
   if ($('runNowText')) $('runNowText').textContent = what
 
-  if ($('runProgress')) {
-    $('runProgress').textContent = (job && job.status)
-      ? '第 ' + (job.cycles || 0) + ' 轮 · 笔记 ' + (job.notesDone || 0) + '/' + (job.notesTotal || 0) +
-        ' · 候选 ' + (job.candidates || 0) + ' · 草稿 ' + (job.drafted || 0) + ' · 已发 ' + (job.sent || 0) +
-        ((job.errors && job.errors.length) ? (' · 错误 ' + job.errors.length) : '')
-      : ''
-  }
+  // 结构化统计：比一长串文字好读
+  if ($('stRound')) $('stRound').textContent = (job && job.cycles) || 0
+  if ($('stNotes')) $('stNotes').textContent = ((job && job.notesDone) || 0) + '/' + ((job && job.notesTotal) || 0)
+  if ($('stCands')) $('stCands').textContent = fmtNum((job && job.candidates) || 0)
+  if ($('stDrafts')) $('stDrafts').textContent = fmtNum((job && job.drafted) || 0)
+  if ($('stSent')) $('stSent').textContent = fmtNum((job && job.sent) || 0)
+  const errCount = (job && Array.isArray(job.errors)) ? job.errors.length : 0
+  if ($('stErrors')) $('stErrors').textContent = errCount
+  if ($('stErrBox')) $('stErrBox').className = 'stat' + (errCount ? ' bad' : '')
+  if ($('errCount')) $('errCount').textContent = errCount
+  renderErrorList(job)
 
   const t = (job && job.tokens) || { input: 0, output: 0, total: 0, calls: 0 }
   const u = st.usage || { input: 0, output: 0, total: 0, calls: 0 }

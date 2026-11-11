@@ -31,10 +31,37 @@ export function createRunner(deps) {
     const n = Number(v)
     return Number.isFinite(n) ? Math.min(hi, Math.max(lo, n)) : d
   }
-  const addError = (m) => {
+  // 结构化错误：{ at, code, message, noteTitle?, user?, commentId? }
+  // 只存字符串的话，UI 没法标类别、也没法显示是哪篇笔记/哪个人。
+  const addError = (message, meta = {}) => {
     const errors = Array.isArray(state.job?.errors) ? state.job.errors.slice() : []
-    errors.push(m)
+    errors.push({ at: new Date().toISOString(), message: String(message), ...meta })
     patch({ errors: errors.slice(-50) })
+  }
+
+  // 把 doSend 的失败码翻译成人话
+  const describeSendFailure = (r, note, c) => {
+    if (!r) return { code: 'unknown', message: '发送失败：没有返回结果' }
+    if (r.halted) return { code: 'halted', message: `已熔断：${r.reason || '平台异常'}（需人工处理后清空 incidents）` }
+    const b = String(r.blocked || '')
+    switch (b) {
+      case 'too_long': return { code: 'too_long', message: `文案超长：${r.length} 字，上限 ${r.limit} 字` }
+      case 'banned_word': return { code: 'banned_word', message: `含禁用词「${r.word}」` }
+      case 'contact': return { code: 'contact', message: '疑似含联系方式 / 导流信息' }
+      case 'price': return { code: 'price', message: '疑似含报价 / 优惠信息' }
+      case 'too_similar': return { code: 'too_similar', message: r.detail || '与最近一条回复过于相似' }
+      case 'need_human_approval': return { code: 'need_approval', message: '缺少人工批准票据' }
+      case 'already_sent': return { code: 'already_sent', message: '这条评论之前已经回复过' }
+      case 'daily_quota': return { code: 'quota', message: '已达今日配额上限' }
+      case 'hourly_quota': return { code: 'quota', message: '已达本小时配额上限' }
+      case 'dry_run_on': return { code: 'dry_run', message: '演练模式开启，未真正发送' }
+      case 'empty_text': return { code: 'empty_text', message: '文案为空' }
+      default: break
+    }
+    if (b.startsWith('cooldown')) return { code: 'cooldown', message: `发送太快，冷却剩余 ${b.split(':')[1] || '?'}` }
+    if (r.detail) return { code: 'reply_failed', message: `平台拒绝：${r.detail}` }
+    if (r.error) return { code: 'reply_failed', message: `平台返回错误：${String(r.error).slice(0, 160)}` }
+    return { code: b || 'unknown', message: `发送失败：${b || '未知原因'}` }
   }
 
   // ---- 处理过的评论：loop 模式下避免对同一条评论反复生成草稿 ----
@@ -202,7 +229,7 @@ export function createRunner(deps) {
         }
         patch({ noteHits: (state.job?.noteHits ?? 0) + hit, feedsScanned: (state.job?.feedsScanned ?? 0) + feeds.length })
       } catch (e) {
-        addError(`搜索「${kw}」失败：${errMsg(e)}`)
+        addError(`搜索「${kw}」失败：${errMsg(e)}`, { code: 'network' })
       }
       await sleep(1200)
     }
@@ -233,7 +260,7 @@ export function createRunner(deps) {
           },
         })
       } catch (e) {
-        addError(`抓评论失败：${errMsg(e)}`)
+        addError(`抓评论失败：${errMsg(e)}`, { code: 'network', noteTitle: note.title })
         patch({ cycleDone: (state.job?.cycleDone ?? 0) + 1 })
         continue
       }
@@ -323,25 +350,25 @@ export function createRunner(deps) {
             meta = scene ? { sceneId: scene.id, sceneName: scene.name } : {}
           }
         } catch (e) {
-          addError(`生成文案失败：${errMsg(e)}`)
+          addError(`生成文案失败：${errMsg(e)}`, { code: 'llm', noteTitle: note.title, user: c.user })
           continue
         }
 
         const rs = rules.reply_style ?? {}
-        if (!text) { addError('模型返回空文案'); continue }
+        if (!text) { addError('模型返回空文案', { code: 'empty_text', noteTitle: note.title, user: c.user }); continue }
 
         // ---- 合规闸：话术库启用时用脚本库的全局规则，否则退回旧规则 ----
         if (scriptsLib) {
           const bad = checkReply(text, scriptsLib, state.recentReplies ?? [])
           if (bad) {
             patch({ blocked: (state.job?.blocked ?? 0) + 1 })
-            addError(`合规拦截（${bad.blocked}）：${bad.detail}`)
+            addError(bad.detail, { code: bad.blocked, noteTitle: note.title, user: c.user })
             continue
           }
         } else {
-          if (text.length > (rs.max_chars ?? 60)) { addError(`文案超长(${text.length}): ${text.slice(0, 20)}…`); continue }
+          if (text.length > (rs.max_chars ?? 60)) { addError(`文案超长：${text.length} 字`, { code: 'too_long', noteTitle: note.title, user: c.user }); continue }
           const hitWord = (rs.banned_words ?? []).find((w) => w && text.includes(w))
-          if (hitWord) { addError(`文案含禁用词「${hitWord}」`); continue }
+          if (hitWord) { addError(`含禁用词「${hitWord}」`, { code: 'banned_word', noteTitle: note.title, user: c.user }); continue }
         }
 
         const draft = {
@@ -371,7 +398,15 @@ export function createRunner(deps) {
           patch({ phase: 'sending' })
           const r = await send({ feedId: note.feedId, xsecToken: note.xsecToken, commentId: c.commentId, text })
           if (r?.ok) patch({ sent: (state.job?.sent ?? 0) + 1 })
-          else addError(`发送失败：${r?.blocked ?? r?.error ?? 'unknown'}`)
+          else {
+            const info = describeSendFailure(r, note, c)
+            addError(info.message, {
+              code: info.code,
+              noteTitle: note.title,
+              user: c.user,
+              commentId: c.commentId,
+            })
+          }
           await sleep(1500)
         }
       }
@@ -443,7 +478,7 @@ export function createRunner(deps) {
         patch({ status: 'stopped', phase: 'stopped', current: null, finishedAt: now() })
         log(`run stopped: cycles=${state.job.cycles} drafted=${state.job.drafted}`)
       } else {
-        addError(errMsg(e))
+        addError(errMsg(e), { code: 'runner' })
         patch({ status: 'error', phase: 'error', current: null, finishedAt: now() })
         log(`run error: ${errMsg(e)}`)
       }

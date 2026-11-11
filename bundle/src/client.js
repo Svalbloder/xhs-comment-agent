@@ -150,6 +150,12 @@
       (t.calls || 0) + ' 次调用） ｜ 累计 ' + fmt(u.total)
   }
 
+  // 错误既可能是字符串（旧数据），也可能是 { at, code, message } 对象
+  function errText(e) {
+    if (typeof e === 'string') return e
+    return (e && e.code ? '[' + e.code + '] ' : '') + ((e && e.message) || '')
+  }
+
   // 标签式输入：回车或点「添加」生成一个标签，点 × 删除；Backspace 删最后一个。
   function ChipField(props) {
     const { value, placeholder, onChange } = props
@@ -428,6 +434,15 @@
           h('div', { className: 'xhs-mut', style: { marginTop: 8 } }, describeNow(st.job)),
           h('div', { className: 'xhs-mut', style: { marginTop: 2 } }, describeProgress(st.job)),
           h('div', { className: 'xhs-mut', style: { marginTop: 2 } }, describeTokens(st.job, st)),
+          ((st.job && st.job.errors) || []).length
+            ? h('details', { style: { marginTop: 8 } },
+              h('summary', { className: 'xhs-mut', style: { cursor: 'pointer' } }, '最近错误（' + st.job.errors.length + '）'),
+              st.job.errors.slice(-5).reverse().map((e, i) => h('div', {
+                key: i,
+                className: 'xhs-mut',
+                style: { marginTop: 4, paddingLeft: 6, borderLeft: '2px solid rgba(230,162,60,.5)' },
+              }, errText(e))))
+            : null,
           h('div', { className: 'xhs-row', style: { marginTop: 12 } },
             h('button', { className: 'xhs-btn primary', disabled: st.running, onClick: () => runNow('loop') }, '开始'),
             h('button', { className: 'xhs-btn', disabled: st.running, onClick: () => runNow('once') }, '跑一轮'),
