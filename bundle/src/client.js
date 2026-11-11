@@ -19,6 +19,9 @@
   .xhs-chip.ok{color:#2fbf71;border-color:#2fbf71;opacity:1}
   .xhs-chip.bad{color:#ff4d67;border-color:#ff4d67;opacity:1}
   .xhs-chip-btn{cursor:pointer;background:transparent;font:inherit}
+  .xhs-bar-row{display:grid;grid-template-columns:60px 1fr 54px;gap:8px;align-items:center;margin-top:6px;font-size:11px}
+  .xhs-bar{height:7px;border-radius:999px;background:rgba(127,127,127,.18);overflow:hidden;border:1px solid rgba(127,127,127,.2)}
+  .xhs-bar > i{display:block;height:100%;border-radius:999px;transition:width .4s ease}
   .xhs-link{display:block;width:100%;text-align:left;background:transparent;border:0;color:#7fb3d5;font:inherit;font-size:12px;padding:2px 0 4px;cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .xhs-link:hover{text-decoration:underline}
   .xhs-card{border:1px solid rgba(127,127,127,.25);border-radius:10px;padding:10px}
@@ -138,6 +141,17 @@
       if (key !== lastKey) { lastKey = key; waveIdx += 1 }
       return { ...d, __color: WAVE_COLORS[waveIdx % WAVE_COLORS.length], __wave: waveIdx }
     })
+  }
+
+  // 细进度条：值/上限，80% 变琥珀、100% 变红
+  function barRow(label, value, max) {
+    const pct = max > 0 ? Math.max(0, Math.min(100, (value / max) * 100)) : 0
+    const fill = pct >= 100 ? '#ff7b8f' : (pct >= 80 ? '#e6c88a' : '#7fb3d5')
+    return h('div', { className: 'xhs-bar-row' },
+      h('span', { className: 'xhs-mut' }, label),
+      h('div', { className: 'xhs-bar' }, h('i', { style: { width: pct + '%', background: fill } })),
+      h('span', { className: 'xhs-mut', style: { textAlign: 'right' } }, value + '/' + max),
+    )
   }
 
   function describeTokens(job, st) {
@@ -361,6 +375,16 @@
         load()
       }
 
+      const resetStats = async () => {
+        if (!window.confirm('重置主控统计？\n\n会清零：轮次 / 笔记 / 候选 / 草稿 / 已发 / 错误 / 本轮 token。\n不会动：草稿清单、今日配额、已发送记录、话术库。')) return
+        setBusy(true)
+        const r = await api('/api/stats/reset', { method: 'POST' })
+        setBusy(false)
+        setMsg(r && r.ok ? '统计已重置' : ('重置失败：' + ((r && (r.error || r.blocked)) || '')))
+        setTimeout(() => setMsg(''), 2500)
+        load()
+      }
+
       const clearDrafts = async () => {
         if (!window.confirm('清空回复清单？\n\n会清掉：草稿列表 + 主控页的本次运行统计。\n不会动：已发送记录、评论去重记录、话术库、规则。')) return
         setBusy(true)
@@ -432,7 +456,10 @@
             h('span', { className: 'xhs-mut' }, '第 ' + ((st.job && st.job.cycles) || 0) + ' 轮'),
           ),
           h('div', { className: 'xhs-mut', style: { marginTop: 8 } }, describeNow(st.job)),
-          h('div', { className: 'xhs-mut', style: { marginTop: 2 } }, describeProgress(st.job)),
+          barRow('本轮进度', (st.job && st.job.notesDone) || 0, (st.job && st.job.notesTotal) || 0),
+          barRow('今日配额', (st.quota && st.quota.dayCount) || 0, (st.quota && st.quota.daily_quota) || 20),
+          barRow('本小时', (st.quota && st.quota.hourCount) || 0, (st.quota && st.quota.hourly_quota) || 5),
+          h('div', { className: 'xhs-mut', style: { marginTop: 6 } }, describeProgress(st.job)),
           h('div', { className: 'xhs-mut', style: { marginTop: 2 } }, describeTokens(st.job, st)),
           ((st.job && st.job.errors) || []).length
             ? h('details', { style: { marginTop: 8 } },
@@ -446,6 +473,7 @@
           h('div', { className: 'xhs-row', style: { marginTop: 12 } },
             h('button', { className: 'xhs-btn primary', disabled: st.running, onClick: () => runNow('loop') }, '开始'),
             h('button', { className: 'xhs-btn', disabled: st.running, onClick: () => runNow('once') }, '跑一轮'),
+            h('button', { className: 'xhs-btn', disabled: st.running || busy, onClick: resetStats }, '重置统计'),
           ),
           h('div', { className: 'xhs-row', style: { marginTop: 6 } },
             h('button', { className: 'xhs-btn', disabled: !st.running || st.paused, onClick: () => ctrl('pause') }, '暂停'),

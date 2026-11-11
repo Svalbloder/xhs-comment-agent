@@ -44,6 +44,12 @@
   .err-tag.gray{color:var(--mut)}
   .err-msg{color:var(--fg)}
   .err-ctx{grid-column:2 / 4;color:var(--mut);font-size:11px}
+  .bar-row{display:grid;grid-template-columns:72px 1fr 64px;gap:10px;align-items:center;margin-top:9px;font-size:12px;color:var(--mut)}
+  .bar{height:9px;border-radius:999px;background:#1b2030;overflow:hidden;border:1px solid #232a3a}
+  .bar > i{display:block;height:100%;width:0;border-radius:999px;background:linear-gradient(90deg,#4d8fc4,#7fb3d5);transition:width .45s ease}
+  .bar.warn > i{background:linear-gradient(90deg,#c98f2e,#e6c88a)}
+  .bar.full > i{background:linear-gradient(90deg,#c43a52,#ff7b8f)}
+  .bar-txt{text-align:right;font-variant-numeric:tabular-nums;color:var(--fg)}
   button.pill{border:0;font:inherit;padding:2px 8px;border-radius:999px}
   .draft{border-top:1px solid var(--line);padding:12px 0}
   .draft:first-child{border-top:0}
@@ -95,7 +101,10 @@
   <div class="card">
     <div class="flex" style="justify-content:space-between">
       <strong>主控面板</strong>
-      <span class="pill" id="runState">空闲</span>
+      <div class="flex" style="gap:8px">
+        <button class="ghost small" onclick="resetStats()">重置统计</button>
+        <span class="pill" id="runState">空闲</span>
+      </div>
     </div>
     <div class="hint" id="runNowText" style="margin-top:6px">还没跑过</div>
     <div class="stats" style="margin-top:10px">
@@ -106,6 +115,9 @@
       <div class="stat"><b id="stSent">0</b><span>已发</span></div>
       <div class="stat" id="stErrBox"><b id="stErrors">0</b><span>错误</span></div>
     </div>
+    <div class="bar-row"><span>本轮进度</span><div class="bar" id="barNotes"><i></i></div><span id="barNotesTxt" class="bar-txt">0/0</span></div>
+    <div class="bar-row"><span>今日配额</span><div class="bar" id="barDay"><i></i></div><span id="barDayTxt" class="bar-txt">0/20</span></div>
+    <div class="bar-row"><span>本小时</span><div class="bar" id="barHour"><i></i></div><span id="barHourTxt" class="bar-txt">0/5</span></div>
     <div class="hint" id="runTokens" style="margin-top:8px"></div>
     <details class="errbox" id="errBox" style="margin-top:8px">
       <summary>最近错误 <span id="errCount" class="pill">0</span></summary>
@@ -586,6 +598,31 @@ function renderControl(st){
       guard.textContent = ''
     }
   }
+
+  // 进度条：本轮笔记进度 + 今日/本小时配额
+  const q = st.quota || {}
+  const setBar = (id, txtId, value, max, label) => {
+    const bar = $(id)
+    if (!bar) return
+    const pct = max > 0 ? Math.max(0, Math.min(100, (value / max) * 100)) : 0
+    bar.querySelector('i').style.width = pct + '%'
+    bar.className = 'bar' + (pct >= 100 ? ' full' : (pct >= 80 ? ' warn' : ''))
+    if ($(txtId)) $(txtId).textContent = value + '/' + max
+    if (label) bar.title = label
+  }
+  setBar('barNotes', 'barNotesTxt', (job && job.notesDone) || 0, (job && job.notesTotal) || 0,
+    '本轮已处理笔记 / 本轮命中笔记')
+  setBar('barDay', 'barDayTxt', q.dayCount || 0, q.daily_quota || 20, '今日已发送 / 今日上限')
+  setBar('barHour', 'barHourTxt', q.hourCount || 0, q.hourly_quota || 5, '本小时已发送 / 本小时上限')
+}
+
+async function resetStats(){
+  if(!confirm('重置主控统计？\n\n会清零：轮次 / 笔记 / 候选 / 草稿 / 已发 / 错误 / 本轮 token。\n不会动：草稿清单、今日配额账本、已发送记录、话术库。')) return
+  const r = await fetch('/api/stats/reset', { method: 'POST' })
+  const j = await r.json()
+  if(!j.ok){ toast(j.error || j.blocked || '重置失败'); return }
+  toast('统计已重置')
+  load()
 }
 
 async function runNow(mode){

@@ -220,6 +220,19 @@ export function startPanel(opts) {
         return json(res, 200, { ok: true, url: target })
       }
 
+      // 只重置主控统计（不动草稿清单）
+      if (req.method === 'POST' && url.pathname === '/api/stats/reset') {
+        if (!isLocal(req)) {
+          return json(res, 403, { ok: false, blocked: 'local_only', error: '重置统计只能在电脑上做' })
+        }
+        try {
+          if (resetJobStats) resetJobStats()
+        } catch (e) {
+          return json(res, 500, { ok: false, error: String(e?.message ?? e) })
+        }
+        return json(res, 200, { ok: true })
+      }
+
       // 清空回复清单：清 drafts.jsonl + 主控页的本次运行统计（不动已发送/去重记录/话术库）
       if (req.method === 'POST' && url.pathname === '/api/drafts/clear') {
         if (!isLocal(req)) {
