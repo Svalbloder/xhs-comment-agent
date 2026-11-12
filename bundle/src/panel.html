@@ -237,6 +237,7 @@
       <strong>回复清单</strong>
       <span class="hint" id="draftCount"></span>
       <div class="sp"></div>
+      <button class="ghost small" onclick="runNow('resend')">补发未发送</button>
       <button class="ghost small" onclick="clearDrafts()">清空清单</button>
       <button class="ghost small" onclick="load()">刷新</button>
     </div>
@@ -649,10 +650,15 @@ async function resetStats(){
 
 async function runNow(mode){
   if (mode === 'loop' && !confirm('「开始」会一轮接一轮持续跑，直到你点「终止」。确认开始？')) return
+  if (mode === 'resend') {
+    const n = (S && S.drafts) ? S.drafts.filter(function(d){ return !d.sent }).length : 0
+    if (!n) { toast('清单里没有未发送的草稿'); return }
+    if (!confirm('补发清单里 ' + n + ' 条未发送的回复？\n\n会按最小间隔逐条发到小红书，期间可在主控暂停/终止。')) return
+  }
   const r = await fetch('/api/run', {method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({mode: mode})})
   const j = await r.json()
   if(!j.ok) toast(j.busy ? '还在跑，先暂停或终止' : ('启动失败：'+(j.error||'')))
-  else toast(mode === 'loop' ? '已开始持续运行' : '已开始跑一轮')
+  else toast(mode === 'loop' ? '已开始持续运行' : (mode === 'resend' ? '已开始补发' : '已开始跑一轮'))
   poll()
 }
 

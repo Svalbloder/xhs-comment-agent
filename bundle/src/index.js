@@ -587,6 +587,27 @@ function applyInner(ctx, config = {}) {
     },
   }
 
+  // 清单里还没发出去的草稿（去重、排除已发/已跳过），供补发模式使用
+  const readPendingDrafts = () => {
+    try {
+      if (!existsSync(draftsPath)) return []
+      const lines = readFileSync(draftsPath, 'utf8').split('\n').filter(Boolean)
+      const skipped = new Set((state.skipped ?? []).map((s) => String(s.commentId)))
+      const seen = new Set()
+      const out = []
+      for (let i = lines.length - 1; i >= 0; i -= 1) {
+        let d
+        try { d = JSON.parse(lines[i]) } catch { continue }
+        const id = String(d?.commentId || '')
+        if (!id || seen.has(id)) continue
+        seen.add(id)
+        if (state.sent?.[id] || skipped.has(id)) continue
+        out.push(d)
+      }
+      return out.reverse()
+    } catch { return [] }
+  }
+
   const runner = createRunner({
     api,
     getRules,
@@ -607,6 +628,8 @@ function applyInner(ctx, config = {}) {
     getScripts: () => getScripts(),
     // 自动发送前先探一次配额：返回 null(可发) 或 'hourly_quota' / 'daily_quota' / 'cooldown:32s'
     quotaCheck: () => guard(`__probe_${Date.now()}`),
+    // 补发模式：清单里还没发出去的草稿
+    pendingDrafts: () => readPendingDrafts(),
   })
 
   let running = false
@@ -670,7 +693,7 @@ function applyInner(ctx, config = {}) {
     if (running) return { ok: false, busy: true, error: '上一轮还在跑，先暂停或终止' }
     running = true
     control.reset()
-    const mode = body?.mode === 'loop' ? 'loop' : 'once'
+    const mode = body?.mode === 'loop' ? 'loop' : (body?.mode === 'resend' ? 'resend' : 'once')
     const p = runner.run({ mode })
     p.catch((e) => {
       state.job = { ...(state.job ?? {}), status: 'error', phase: 'error', errors: [String(e?.message ?? e)] }

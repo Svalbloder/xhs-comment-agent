@@ -435,19 +435,22 @@ export function createRunner(deps) {
 
         // 人工复核关闭时才自动发；开启时草稿停在清单里等人点
         if (!requireApproval()) {
-          // 发之前先看配额/间隔：
-          //   cooldown → 等够时间再发（不该把整轮任务打断）
-          //   quota    → 真的用尽了，记一条错误并结束整个任务
-          const gate = deps.quotaCheck ? deps.quotaCheck() : null
-          if (gate && String(gate).startsWith('cooldown')) {
-            const secs = Math.min(120, Number(String(gate).split(':')[1] || 0) || 0)
+          // 发之前先看配额/间隔。冷却就老老实实等到点，绝不"等 0 秒"直接撞上去。
+          // 注意 gate 形如 'cooldown:44s'，Number('44s') 是 NaN，必须 parseInt。
+          let gate = deps.quotaCheck ? deps.quotaCheck() : null
+          for (let attempt = 0; attempt < 8; attempt += 1) {
+            if (!gate || !String(gate).startsWith('cooldown')) break
+            const secs = Math.min(180, parseInt(String(gate).split(':')[1], 10) || 0)
             patch({ phase: 'cooling', current: { action: 'cooling', seconds: secs } })
-            log(`cooldown ${secs}s before next send`)
-            for (let i = 0; i < secs; i += 1) {
+            log(`cooldown ${secs}s, waiting before next send`)
+            for (let k = 0; k < secs + 2; k += 1) {
               await control.checkpoint()
               await sleep(1000)
             }
-          } else if (gate) {
+            gate = deps.quotaCheck ? deps.quotaCheck() : null
+          }
+
+          if (gate) {
             addError('本小时/今日配额已用尽，已停止自动发送', {
               code: 'quota',
               noteTitle: note.title,
@@ -476,16 +479,20 @@ export function createRunner(deps) {
           if (r?.ok) patch({ sent: (state.job?.sent ?? 0) + 1 })
           else {
             const info = describeSendFailure(r, note, c)
-            addError(info.message, {
-              code: info.code,
-              noteTitle: note.title,
-              user: c.user,
-              commentId: c.commentId,
-            })
-            // 只有配额真用尽才终止任务；冷却只是等，不影响后续
-            if (info.code === 'quota') {
-              patch({ phase: 'quota-exhausted', current: null })
-              return { quotaHit: true }
+            if (info.code === 'cooldown') {
+              // 万一等待后仍撞上冷却（并发/计时误差），只记日志，不当作错误打扰人
+              log(`send skipped by cooldown: ${info.message}`)
+            } else {
+              addError(info.message, {
+                code: info.code,
+                noteTitle: note.title,
+                user: c.user,
+                commentId: c.commentId,
+              })
+              if (info.code === 'quota') {
+                patch({ phase: 'quota-exhausted', current: null })
+                return { quotaHit: true }
+              }
             }
           }
           await sleep(1500)
@@ -497,11 +504,71 @@ export function createRunner(deps) {
     }
   }
 
+  /** 把清单里还没发出去的草稿，按最小间隔补发（不重新搜索/生成）。 */
+  async function resendPending() {
+    const pending = deps.pendingDrafts ? deps.pendingDrafts() : []
+    patch({
+      phase: 'resend',
+      notesTotal: pending.length,
+      current: { action: 'sending', total: pending.length },
+    })
+    if (!pending.length) {
+      log('resend: nothing pending')
+      return { quotaHit: false }
+    }
+    log(`resend: ${pending.length} pending drafts`)
+    persist()
+
+    for (const d of pending) {
+      await control.checkpoint()
+
+      // 等到允许发送的时间再发（冷却只等待，不能当错误）
+      let gate = deps.quotaCheck ? deps.quotaCheck() : null
+      for (let attempt = 0; attempt < 8 && gate && String(gate).startsWith('cooldown'); attempt += 1) {
+        const secs = Math.min(180, parseInt(String(gate).split(':')[1], 10) || 0)
+        patch({ phase: 'cooling', current: { action: 'cooling', seconds: secs } })
+        for (let k = 0; k < secs + 2; k += 1) {
+          await control.checkpoint()
+          await sleep(1000)
+        }
+        gate = deps.quotaCheck ? deps.quotaCheck() : null
+      }
+      if (gate) {
+        addError('本小时/今日配额已用尽，补发中止', { code: 'quota' })
+        return { quotaHit: true }
+      }
+
+      patch({
+        phase: 'sending',
+        current: { action: 'sending', noteTitle: d.noteTitle, commentUser: d.user },
+      })
+
+      const payload = { feedId: d.feedId, xsecToken: d.xsecToken, commentId: d.commentId, text: d.replyText }
+      let r = await send(payload)
+      if (!r?.ok && describeSendFailure(r, d, {}).code === 'reply_failed') {
+        log('resend failed, retry once')
+        await sleep(3000)
+        await control.checkpoint()
+        r = await send(payload)
+      }
+
+      if (r?.ok) {
+        patch({ sent: (state.job?.sent ?? 0) + 1, notesDone: (state.job?.notesDone ?? 0) + 1 })
+      } else {
+        const info = describeSendFailure(r, d, {})
+        if (info.code === 'cooldown') log('resend skipped by cooldown')
+        else addError(info.message, { code: info.code, noteTitle: d.noteTitle, user: d.user, commentId: d.commentId })
+      }
+      await sleep(1200)
+    }
+    return { quotaHit: false }
+  }
+
   /**
-   * @param {{mode?:'once'|'loop'}} opts
+   * @param {{mode?:'once'|'loop'|'resend'}} opts
    */
   async function run(opts = {}) {
-    const mode = opts.mode === 'loop' ? 'loop' : 'once'
+    const mode = opts.mode === 'loop' ? 'loop' : (opts.mode === 'resend' ? 'resend' : 'once')
     control.reset()
     state.job = {
       id: String(Date.now()),
@@ -535,6 +602,18 @@ export function createRunner(deps) {
     persist()
 
     try {
+      // 补发模式：不再搜索/生成，只把清单里没发出去的草稿按间隔发掉
+      if (mode === 'resend') {
+        const r = await resendPending()
+        if (r && r.quotaHit) {
+          patch({ status: 'done', phase: 'quota-exhausted', current: null, finishedAt: now() })
+        } else {
+          patch({ status: 'done', phase: 'done', current: null, finishedAt: now() })
+        }
+        log(`resend finished: sent=${state.job.sent} errors=${state.job.errors.length}`)
+        return
+      }
+
       do {
         state.job.cycles = (state.job.cycles ?? 0) + 1
         patch({ phase: 'cycle-start' })

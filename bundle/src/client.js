@@ -336,7 +336,7 @@
           setTimeout(() => setMsg(''), 3000)
           return
         }
-        setMsg(mode === 'loop' ? '已开始持续运行（点「终止」才会停）' : '已开始跑一轮')
+        setMsg(mode === 'loop' ? '已开始持续运行（点「终止」才会停）' : (mode === 'resend' ? '已开始补发未发送的草稿' : '已开始跑一轮'))
         setTimeout(() => setMsg(''), 3000)
         load()
       }
@@ -617,6 +617,7 @@
             h('div', { className: 'xhs-row', style: { marginBottom: 6 } },
               h('span', { className: 'xhs-mut' }, '同一波次用同一颜色'),
               h('div', { className: 'xhs-sp' }),
+              h('button', { className: 'xhs-btn', disabled: busy || st.running, onClick: () => runNow('resend') }, '补发未发送'),
               h('button', { className: 'xhs-btn', disabled: busy, onClick: clearDrafts }, '清空清单'),
             ),
             drafts.map((d, i) => h(DraftItem, {
