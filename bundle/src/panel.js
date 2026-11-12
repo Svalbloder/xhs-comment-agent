@@ -220,6 +220,23 @@ export function startPanel(opts) {
         return json(res, 200, { ok: true, url: target })
       }
 
+      // 一键屏蔽某个作者：把昵称加进话术库的 skip_author_words
+      if (req.method === 'POST' && url.pathname === '/api/block-author') {
+        if (!isLocal(req)) {
+          return json(res, 403, { ok: false, blocked: 'local_only', error: '屏蔽作者只能在电脑上操作' })
+        }
+        const body = await readBody(req)
+        const user = String(body?.user || '').trim()
+        if (!user) return json(res, 400, { ok: false, error: '缺少作者昵称' })
+        const lib = getScripts ? getScripts() : null
+        if (!lib) return json(res, 400, { ok: false, error: '话术库未加载' })
+        const words = new Set((lib.global.skip_author_words || []).map(String))
+        words.add(user)
+        lib.global.skip_author_words = Array.from(words)
+        const r = saveScripts ? saveScripts(lib) : { ok: false, error: '保存不可用' }
+        if (!r || !r.ok) return json(res, 400, r || { ok: false })
+        return json(res, 200, { ok: true, added: user, total: lib.global.skip_author_words.length })
+      }
       // 只重置主控统计（不动草稿清单）
       if (req.method === 'POST' && url.pathname === '/api/stats/reset') {
         if (!isLocal(req)) {

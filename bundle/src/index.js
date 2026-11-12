@@ -47,7 +47,7 @@ const DEFAULT_RULES = {
     max_len: 120,
     exclude_authors: [],
   },
-  reply_policy: { max_per_note: 3, daily_quota: 20, hourly_quota: 5, min_interval_sec: 45, max_interval_sec: 180 },
+  reply_policy: { max_per_note: 3, max_per_note_lifetime: 2, daily_quota: 20, hourly_quota: 5, min_interval_sec: 45, max_interval_sec: 180 },
   reply_style: { max_chars: 60 },
 }
 

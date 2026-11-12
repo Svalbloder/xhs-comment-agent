@@ -428,6 +428,7 @@ function renderDrafts(list){
           ? '<span class="hint">发送需在电脑上确认</span>'
           : '<button class="small" onclick="send('+i+')"'+(d.sent?' disabled':'')+'>发送这条</button>') +
         '<button class="ghost small" onclick="openNote('+i+')">打开笔记</button>' +
+        '<button class="ghost small" onclick="blockAuthor('+i+')" title="把这个作者加入黑名单，以后不再回复">屏蔽作者</button>' +
         '<button class="ghost small" onclick="skip('+i+')">跳过</button>' +
         '<span class="hint" id="m'+i+'"></span>' +
       '</div></div>'
@@ -462,6 +463,18 @@ async function skip(i){
   load()
 }
 
+async function blockAuthor(i){
+  const d = S.drafts[i]
+  if(!d || !d.user){ toast('这条草稿没有作者昵称'); return }
+  if(!confirm('把「' + d.user + '」加入作者黑名单？\n\n加入后，包含这个昵称的评论一律跳过。')) return
+  const r = await fetch('/api/block-author', {
+    method:'POST', headers:{'content-type':'application/json'},
+    body: JSON.stringify({ user: d.user })
+  })
+  const j = await r.json()
+  if(!j.ok){ toast(j.error || j.blocked || '屏蔽失败'); return }
+  toast('已屏蔽「' + d.user + '」，黑名单共 ' + j.total + ' 项')
+}
 async function openNote(i){
   const d = S.drafts[i]
   if(!d || !d.feedId){ toast('这条草稿没有笔记 id'); return }

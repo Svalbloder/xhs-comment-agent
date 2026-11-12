@@ -67,6 +67,8 @@ const DEFAULT_GLOBAL = {
   ],
   // 营销号 / 机器人特征：昵称命中或评论命中正则，就直接跳过（不回复也不计候选）
   skip_author_words: ['打卡', '提醒', '机器人', '小助手', '客服', '福利号', '自动回复', '官方号', '运营号'],
+  // 昵称正则：AI 助手常见的命名（AI / 助手 / 机器人 / 自动），避免误伤 "daily" 这类词
+  skip_author_patterns: ['^ai', 'ai$', '助手', '机器人', '自动'],
   skip_content_patterns: [
     '每晚\\d{1,2}[:：]?\\d{0,2}.*提醒',
     '定时.*提醒',
@@ -75,6 +77,11 @@ const DEFAULT_GLOBAL = {
     '不迷路',
     '持续更新.{0,8}干货',
     '关注我.{0,6}更新',
+    '收到啦',
+    '记住啦',
+    '我会提醒',
+    '每天.{0,4}\\d{1,2}[:：]',
+    '打卡',
   ],
 }
 
@@ -122,6 +129,7 @@ export function validateScripts(raw) {
   if (!Array.isArray(g.block_ip_locations)) errors.push('global.block_ip_locations 必须是数组')
   if (!Array.isArray(g.skip_comment_words)) errors.push('global.skip_comment_words 必须是数组')
   if (!Array.isArray(g.skip_author_words)) errors.push('global.skip_author_words 必须是数组')
+  if (!Array.isArray(g.skip_author_patterns)) errors.push('global.skip_author_patterns 必须是数组')
   if (!Array.isArray(g.skip_content_patterns)) errors.push('global.skip_content_patterns 必须是数组')
 
   const ids = new Set()
@@ -300,6 +308,12 @@ export function isSkippableAuthor(lib, user, content) {
     for (const w of g.skip_author_words ?? []) {
       const kw = normalize(w)
       if (kw && name.includes(kw)) return { why: 'author', hit: w }
+    }
+    for (const p of g.skip_author_patterns ?? []) {
+      if (!p) continue
+      try {
+        if (new RegExp(p).test(name)) return { why: 'author_pattern', hit: p }
+      } catch { /* 非法正则忽略 */ }
     }
   }
 

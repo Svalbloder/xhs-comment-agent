@@ -83,6 +83,22 @@ export function createRunner(deps) {
     }
   }
 
+  // ---- 每篇笔记累计回复数：跨轮次、跨重启，避免同一篇帖子底下反复评论 ----
+  const noteReplies = () => {
+    if (!state.noteReplies || typeof state.noteReplies !== 'object') state.noteReplies = {}
+    return state.noteReplies
+  }
+  const noteReplyCount = (feedId) => {
+    const v = noteReplies()[String(feedId)]
+    if (!v) return 0
+    return typeof v === 'object' ? Number(v.count || 0) : Number(v || 0)
+  }
+  const bumpNoteReply = (feedId) => {
+    const m = noteReplies()
+    const k = String(feedId)
+    m[k] = { count: noteReplyCount(k) + 1, at: new Date().toISOString() }
+  }
+
   // 记住刚生成的回复：用于相似度去重与模板轮换
   const rememberReply = (text, templateKey) => {
     const arr = Array.isArray(state.recentReplies) ? state.recentReplies : (state.recentReplies = [])
@@ -239,8 +255,22 @@ export function createRunner(deps) {
     patch({ notesTotal: (state.job?.notesTotal ?? 0) + notes.length, cycleNotes: notes.length, cycleDone: 0 })
 
     const maxPerNote = num(rules.reply_policy?.max_per_note, 1, 20, 3)
+    const lifetimeMax = num(rules.reply_policy?.max_per_note_lifetime, 0, 50, 2)
     for (const note of notes) {
       await control.checkpoint()
+
+      // 每篇笔记的终身额度：跨轮次累计，避免同一篇帖子底下被反复评论
+      const already = noteReplyCount(note.feedId)
+      if (lifetimeMax > 0 && already >= lifetimeMax) {
+        patch({
+          skippedNoteQuota: (state.job?.skippedNoteQuota ?? 0) + 1,
+          cycleDone: (state.job?.cycleDone ?? 0) + 1,
+          notesDone: (state.job?.notesDone ?? 0) + 1,
+        })
+        continue
+      }
+      const budgetThisNote = lifetimeMax > 0 ? Math.min(maxPerNote, lifetimeMax - already) : maxPerNote
+
       patch({
         phase: `comments:${String(note.title).slice(0, 12)}`,
         current: { action: 'comments', noteTitle: note.title, feedId: note.feedId, cycle: cycleNo },
@@ -299,7 +329,7 @@ export function createRunner(deps) {
       let used = 0
       const usedByScene = {}
       for (const c of cands) {
-        if (used >= maxPerNote) break
+        if (used >= budgetThisNote) break
         await control.checkpoint()
         if (seenHit(c.commentId)) {
           patch({ skippedSeen: (state.job?.skippedSeen ?? 0) + 1 })
@@ -383,6 +413,7 @@ export function createRunner(deps) {
           ...meta,
         }
         onDraft(draft)
+        bumpNoteReply(note.feedId)
         seenMark(c.commentId)
         rememberReply(text, meta.templateKey)
         usedByScene[scene?.id ?? ''] = (usedByScene[scene?.id ?? ''] ?? 0) + 1
@@ -457,6 +488,7 @@ export function createRunner(deps) {
       skippedAuthor: 0,
       skippedBlacklist: 0,
       skippedIp: 0,
+      skippedNoteQuota: 0,
       skippedNoScene: 0,
       skippedRepeat: 0,
       skippedSceneQuota: 0,
