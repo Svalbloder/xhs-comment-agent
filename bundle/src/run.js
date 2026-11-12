@@ -141,6 +141,8 @@ export function createRunner(deps) {
       xsecToken: n?.xsecToken,
       title: n?.noteCard?.displayTitle ?? '',
       liked: Number(n?.noteCard?.interactInfo?.likedCount ?? 0),
+      authorId: String(n?.noteCard?.user?.userId ?? ''),
+      author: String(n?.noteCard?.user?.nickname ?? ''),
     }))
   }
 
@@ -225,6 +227,11 @@ export function createRunner(deps) {
   async function runCycle(cycleNo) {
     const rules = getRules()
     const scriptsLib = readScripts()
+    // 「自己」的身份：用登录 user_id 判定，底层硬拦，不依赖昵称配置
+    let self = deps.getSelf ? deps.getSelf() : null
+    if (!self && deps.ensureSelf) {
+      try { self = await deps.ensureSelf() } catch { self = null }
+    }
     // 搜索词优先取话术库（一处配置全搞定）；没配才回退到规则页
     const libKeywords = (scriptsLib?.search?.keywords ?? []).filter(Boolean)
     const keywords = (libKeywords.length ? libKeywords : (rules.keywords ?? [])).filter(Boolean).slice(0, 3)
@@ -281,6 +288,16 @@ export function createRunner(deps) {
       }
       const budgetThisNote = lifetimeMax > 0 ? Math.min(maxPerNote, lifetimeMax - already) : maxPerNote
 
+      // 自己发的笔记不回复（省一次详情抓取）
+      if (self && self.id && note.authorId && note.authorId === self.id) {
+        patch({
+          skippedSelfNote: (state.job?.skippedSelfNote ?? 0) + 1,
+          cycleDone: (state.job?.cycleDone ?? 0) + 1,
+          notesDone: (state.job?.notesDone ?? 0) + 1,
+        })
+        continue
+      }
+
       patch({
         phase: `comments:${String(note.title).slice(0, 12)}`,
         current: { action: 'comments', noteTitle: note.title, feedId: note.feedId, cycle: cycleNo },
@@ -321,6 +338,16 @@ export function createRunner(deps) {
 
       // 同行 / 广告 / 营销号先剔掉，别浪费配额和话术
       let cands = pickComments(detail, rules)
+      {
+        // 0) 自己发的评论一律跳过（按 userId 判定，与昵称无关）
+        let mine = 0
+        cands = cands.filter((c) => {
+          if (self && self.id && c.userId && c.userId === self.id) { mine += 1; return false }
+          if (self && self.name && c.user && c.user === self.name) { mine += 1; return false }
+          return true
+        })
+        if (mine) patch({ skippedSelf: (state.job?.skippedSelf ?? 0) + mine })
+      }
       if (scriptsLib) {
         let black = 0
         let bot = 0
@@ -590,6 +617,8 @@ export function createRunner(deps) {
       skippedIp: 0,
       skippedNoteQuota: 0,
       skippedTitle: 0,
+      skippedSelf: 0,
+      skippedSelfNote: 0,
       skippedNoScene: 0,
       skippedRepeat: 0,
       skippedSceneQuota: 0,

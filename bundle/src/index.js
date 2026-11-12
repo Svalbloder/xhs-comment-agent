@@ -234,6 +234,21 @@ function applyInner(ctx, config = {}) {
   const openLoginWindow = () => sidecar.openLoginWindow()
   const sidecarBusy = () => sidecar.busy()
 
+  // 「自己」的身份：用登录态里的 user_id 判定，不是硬编码昵称。
+  // 执行器会跳过自己发的评论、以及自己发的笔记，避免自己回复自己。
+  let selfIdentity = null
+  const rememberSelf = (login) => {
+    if (login && login.is_logged_in && login.user_id) {
+      selfIdentity = { id: String(login.user_id), name: String(login.username || '') }
+    }
+    return selfIdentity
+  }
+  const ensureSelf = async () => {
+    if (selfIdentity) return selfIdentity
+    try { rememberSelf(await readLogin()) } catch { /* 登录态不可用就先放过 */ }
+    return selfIdentity
+  }
+
   const refreshCounters = () => {
     const now = new Date()
     const day = now.toISOString().slice(0, 10)
@@ -362,7 +377,7 @@ function applyInner(ctx, config = {}) {
       const healthy = ready.ok
       let login = null
       if (healthy) {
-        try { login = await readLogin() } catch (e) { login = { error: String(e?.message ?? e) } }
+        try { login = await readLogin(); rememberSelf(login) } catch (e) { login = { error: String(e?.message ?? e) } }
       }
       refreshCounters()
       const r = getRules()
@@ -630,6 +645,8 @@ function applyInner(ctx, config = {}) {
     quotaCheck: () => guard(`__probe_${Date.now()}`),
     // 补发模式：清单里还没发出去的草稿
     pendingDrafts: () => readPendingDrafts(),
+    ensureSelf: () => ensureSelf(),
+    getSelf: () => selfIdentity,
   })
 
   let running = false
@@ -768,7 +785,7 @@ function applyInner(ctx, config = {}) {
           const ready = await ensureService()
           let login = null
           if (ready.ok) {
-            try { login = await readLogin() } catch (e) { login = { error: String(e?.message ?? e) } }
+            try { login = await readLogin(); rememberSelf(login) } catch (e) { login = { error: String(e?.message ?? e) } }
           }
           refreshCounters()
           const r = getRules()
