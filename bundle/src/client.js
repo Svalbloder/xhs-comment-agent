@@ -103,6 +103,7 @@
     if (c.action === 'drafted') return '草稿已生成：' + (c.replyText || '')
     if (c.action === 'waiting') return '等下一轮（约 ' + (c.seconds || 0) + ' 秒）'
     if (c.action === 'cooling') return '冷却中（还差约 ' + (c.seconds || 0) + ' 秒，避免发太快）'
+    if (c.action === 'retrying') return '发送失败，正在重试（第 ' + (c.attempt || 2) + ' 次）'
     return ''
   }
   function describeProgress(job) {

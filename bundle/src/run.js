@@ -448,7 +448,21 @@ export function createRunner(deps) {
 
           await control.checkpoint()
           patch({ phase: 'sending' })
-          const r = await send({ feedId: note.feedId, xsecToken: note.xsecToken, commentId: c.commentId, text })
+          let r = await send({ feedId: note.feedId, xsecToken: note.xsecToken, commentId: c.commentId, text })
+
+          // 平台侧失败（点不到回复按钮 / 页面没加载完）大多是瞬时的：隔 3 秒重试一次
+          if (!r?.ok) {
+            const first = describeSendFailure(r, note, c)
+            if (first.code === 'reply_failed' && !r?.halted) {
+              patch({ phase: 'retry', current: { ...(state.job?.current ?? {}), action: 'retrying', attempt: 2 } })
+              log(`send failed, retry once: ${first.message}`)
+              await sleep(3000)
+              await control.checkpoint()
+              patch({ phase: 'sending' })
+              r = await send({ feedId: note.feedId, xsecToken: note.xsecToken, commentId: c.commentId, text })
+            }
+          }
+
           if (r?.ok) patch({ sent: (state.job?.sent ?? 0) + 1 })
           else {
             const info = describeSendFailure(r, note, c)

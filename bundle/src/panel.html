@@ -494,7 +494,8 @@ const ACTION_DESC = {
   generating: (c) => '生成回复：@' + (c.commentUser || '') + ' 「' + (c.commentText || '') + '」',
   drafted: (c) => '草稿已生成：' + (c.replyText || ''),
   waiting: (c) => '等下一轮（约 ' + (c.seconds || 0) + ' 秒）',
-  cooling: (c) => '冷却中（还差约 ' + (c.seconds || 0) + ' 秒，避免发太快）'
+  cooling: (c) => '冷却中（还差约 ' + (c.seconds || 0) + ' 秒，避免发太快）',
+  retrying: (c) => '发送失败，正在重试（第 ' + (c.attempt || 2) + ' 次）'
 }
 
 function fmtNum(n){ return Number(n || 0).toLocaleString('zh-CN') }
