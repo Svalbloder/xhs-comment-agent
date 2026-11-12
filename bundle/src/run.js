@@ -58,7 +58,7 @@ export function createRunner(deps) {
       case 'empty_text': return { code: 'empty_text', message: '文案为空' }
       default: break
     }
-    if (b.startsWith('cooldown')) return { code: 'cooldown', message: `发送太快，冷却剩余 ${b.split(':')[1] || '?'}` }
+    if (b.startsWith('cooldown')) return { code: 'cooldown', message: `距上一条回复还差 ${b.split(':')[1] || '?'}（最小间隔限制），已自动等待` }
     if (r.detail) return { code: 'reply_failed', message: `平台拒绝：${r.detail}` }
     if (r.error) return { code: 'reply_failed', message: `平台返回错误：${String(r.error).slice(0, 160)}` }
     return { code: b || 'unknown', message: `发送失败：${b || '未知原因'}` }
@@ -425,12 +425,21 @@ export function createRunner(deps) {
 
         // 人工复核关闭时才自动发；开启时草稿停在清单里等人点
         if (!requireApproval()) {
-          // 发之前先问一次配额：发满了就别一条条试，直接停，只记一条错误
+          // 发之前先看配额/间隔：
+          //   cooldown → 等够时间再发（不该把整轮任务打断）
+          //   quota    → 真的用尽了，记一条错误并结束整个任务
           const gate = deps.quotaCheck ? deps.quotaCheck() : null
-          if (gate) {
-            const isCool = String(gate).startsWith('cooldown')
-            addError(isCool ? `发送太频繁：${String(gate).split(':')[1] || ''}` : '本小时/今日配额已用尽，已停止自动发送', {
-              code: isCool ? 'cooldown' : 'quota',
+          if (gate && String(gate).startsWith('cooldown')) {
+            const secs = Math.min(120, Number(String(gate).split(':')[1] || 0) || 0)
+            patch({ phase: 'cooling', current: { action: 'cooling', seconds: secs } })
+            log(`cooldown ${secs}s before next send`)
+            for (let i = 0; i < secs; i += 1) {
+              await control.checkpoint()
+              await sleep(1000)
+            }
+          } else if (gate) {
+            addError('本小时/今日配额已用尽，已停止自动发送', {
+              code: 'quota',
               noteTitle: note.title,
             })
             patch({ phase: 'quota-exhausted', current: null })
@@ -449,8 +458,8 @@ export function createRunner(deps) {
               user: c.user,
               commentId: c.commentId,
             })
-            // 配额/冷却类错误：这一轮不用再试了
-            if (info.code === 'quota' || info.code === 'cooldown') {
+            // 只有配额真用尽才终止任务；冷却只是等，不影响后续
+            if (info.code === 'quota') {
               patch({ phase: 'quota-exhausted', current: null })
               return { quotaHit: true }
             }

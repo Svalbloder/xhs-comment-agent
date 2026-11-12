@@ -102,6 +102,7 @@
     if (c.action === 'generating') return '生成回复：@' + (c.commentUser || '') + ' 「' + (c.commentText || '') + '」'
     if (c.action === 'drafted') return '草稿已生成：' + (c.replyText || '')
     if (c.action === 'waiting') return '等下一轮（约 ' + (c.seconds || 0) + ' 秒）'
+    if (c.action === 'cooling') return '冷却中（还差约 ' + (c.seconds || 0) + ' 秒，避免发太快）'
     return ''
   }
   function describeProgress(job) {
