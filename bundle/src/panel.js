@@ -189,7 +189,7 @@ export function startPanel(opts) {
         const next = {
           ...cur,
           keywords: body.keywords ?? cur.keywords ?? [],
-          note_gate: { ...(cur.note_gate ?? {}) },
+          note_gate: { ...(cur.note_gate ?? {}), ...(body.note_gate ?? {}) },
           comment_gate: { ...(cur.comment_gate ?? {}), ...(body.comment_gate ?? {}) },
           reply_policy: { ...(cur.reply_policy ?? {}), ...(body.reply_policy ?? {}) },
           reply_style: { ...(cur.reply_style ?? {}), ...(body.reply_style ?? {}) },

@@ -146,6 +146,8 @@
   <div class="card">
     <div class="row">
       <div class="col">
+        <label>标题必须包含任一（空 = 不筛；命中才抓详情，省时间）</label>
+        <div class="tags" id="tags-titlemust"></div>
         <label>评论必须包含任一（空 = 不筛）</label>
         <div class="tags" id="tags-must_any"></div>
         <label>评论必须不含（黑名单）</label>
@@ -257,10 +259,11 @@ const TAG_PH = {
   banned_words: '输入禁用词后回车，例如：微信',
   searchkw: '输入搜索词后回车，例如：大小脸',
   skipauthor: '输入作者特征词后回车，例如：打卡',
+  titlemust: '输入标题必须包含的词后回车，例如：大小脸',
   skipcomment: '输入评论黑名单词后回车，例如：加微',
   blockip: '输入要屏蔽的 IP 属地后回车，例如：江苏'
 }
-const TAGS = { must_any: [], must_not: [], banned_words: [], searchkw: [], skipauthor: [], skipcomment: [], blockip: [] }
+const TAGS = { titlemust: [], must_any: [], must_not: [], banned_words: [], searchkw: [], skipauthor: [], skipcomment: [], blockip: [] }
 
 function renderTags(name){
   const box = $('tags-' + name)
@@ -348,6 +351,7 @@ async function load(){
   if(tagsBeingEdited()){
     // 正在输入标签时不要被 15s 轮询覆盖
   } else {
+    syncTags('titlemust', (r0.note_gate || {}).title_must_any)
     syncTags('must_any', cg.must_any)
     syncTags('must_not', cg.must_not)
     syncTags('banned_words', rs.banned_words)
@@ -368,6 +372,7 @@ async function load(){
 
 async function saveRules(){
   const body = {
+    note_gate: { title_must_any: TAGS.titlemust.slice() },
     comment_gate: { level:[1,2], must_any: TAGS.must_any.slice(), must_not: TAGS.must_not.slice(), max_len: +$('max_len').value || 120 },
     reply_policy: { max_per_note:+$('max_per_note').value||2, hourly_quota:+$('hourly_quota').value||5, daily_quota:+$('daily_quota').value||20, min_interval_sec:+$('min_interval_sec').value||45, cycle_interval_sec:+$('cycle_interval_sec').value||60, max_notes_per_cycle:+$('max_notes_per_cycle').value||6 },
     reply_style: { max_chars:+$('max_chars').value||60, banned_words: TAGS.banned_words.slice() },

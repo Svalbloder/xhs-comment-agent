@@ -228,6 +228,7 @@
             return {
               keywords: (s.rules.keywords || []).slice(),
               require_approval: srvApproval,
+              title_must_any: (((s.rules.note_gate || {}).title_must_any) || []).slice(),
               must_any: (((s.rules.comment_gate || {}).must_any) || []).slice(),
               must_not: (((s.rules.comment_gate || {}).must_not) || []).slice(),
               max_len: (s.rules.comment_gate || {}).max_len ?? 120,
@@ -297,6 +298,7 @@
           body: JSON.stringify({
             keywords: f.keywords,
             require_approval: !!f.require_approval,
+            note_gate: { title_must_any: f.title_must_any } ,
             comment_gate: { level: [1, 2], must_any: f.must_any, must_not: f.must_not, max_len: +f.max_len || 120 },
             reply_policy: { max_per_note: +f.max_per_note || 2, hourly_quota: +f.hourly_quota || 5, daily_quota: +f.daily_quota || 20, min_interval_sec: +f.min_interval_sec || 45, cycle_interval_sec: +f.cycle_interval_sec || 60, max_notes_per_cycle: +f.max_notes_per_cycle || 6 },
             reply_style: { max_chars: +f.max_chars || 60, banned_words: f.banned_words },
@@ -571,6 +573,8 @@
         ) : null,
 
         tab === 'rules' ? h('div', { className: 'xhs-card' },
+          h('label', { className: 'xhs-label' }, '标题必须包含任一（空 = 不筛；命中才抓详情）'),
+          h(ChipField, { value: form.title_must_any, placeholder: '大小脸', onChange: (v) => setForm({ ...form, title_must_any: v }) }),
           h('label', { className: 'xhs-label' }, '评论必须包含其一（空 = 不筛）'),
           h(ChipField, { value: form.must_any, placeholder: '多少钱', onChange: (v) => setForm({ ...form, must_any: v }) }),
           h('label', { className: 'xhs-label' }, '评论不能包含（黑名单）'),

@@ -238,6 +238,16 @@ export function createRunner(deps) {
       patch({ phase: `searching:${kw}`, current: { action: 'searching', keyword: kw, cycle: cycleNo } })
       try {
         const feeds = await searchOnce(kw, rules)
+
+        // 标题预筛：标题不含指定词的直接不抓详情（省下 30~90 秒/篇）
+        const titleMust = (rules.note_gate?.title_must_any ?? []).filter(Boolean)
+        if (titleMust.length && feeds.length) {
+          const passed = feeds.filter((n) => titleMust.some((k) => String(n?.noteCard?.displayTitle ?? '').includes(k))).length
+          if (feeds.length > passed) {
+            patch({ skippedTitle: (state.job?.skippedTitle ?? 0) + (feeds.length - passed) })
+          }
+        }
+
         let hit = 0
         for (const n of pickNotes(feeds, rules)) {
           hit += 1
@@ -512,6 +522,7 @@ export function createRunner(deps) {
       skippedBlacklist: 0,
       skippedIp: 0,
       skippedNoteQuota: 0,
+      skippedTitle: 0,
       skippedNoScene: 0,
       skippedRepeat: 0,
       skippedSceneQuota: 0,
