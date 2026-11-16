@@ -221,6 +221,16 @@ export function pickTemplate(lib, scene, recentTexts = [], usage = {}) {
     const u = usage[key] ?? {}
     return { text, key, count: Number(u.count ?? 0), lastUsed: Number(u.lastUsed ?? 0) }
   })
+
+  // 先打散再排序：count/lastUsed 全相同的候选如果保持文件顺序，
+  // 回复就会严格按话术库里的排列出现（第 1 条永远先出），很像机器人。
+  // 洗牌后同分随机，既保证"用得少的优先"，又不会次次同一个顺序。
+  for (let i = scored.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(Math.random() * (i + 1))
+    const tmp = scored[i]
+    scored[i] = scored[j]
+    scored[j] = tmp
+  }
   scored.sort((a, b) => (a.count - b.count) || (a.lastUsed - b.lastUsed))
 
   for (const c of scored) {
