@@ -550,7 +550,12 @@
           h('div', { className: 'xhs-row' },
             h('input', { type: 'checkbox', checked: s.enabled !== false, onChange: (e) => patchScene(i, { enabled: e.target.checked }) }),
             h('span', null, s.name),
-            h('span', { className: 'xhs-chip' }, s.mode),
+            h('select', {
+              className: 'xhs-input',
+              style: { width: 'auto', padding: '2px 6px', fontSize: 11 },
+              value: s.mode,
+              onChange: (e) => patchScene(i, { mode: e.target.value }),
+            }, ['template', 'hybrid', 'llm'].map((m) => h('option', { key: m, value: m }, m))),
             h('span', { className: 'xhs-chip' }, ((s.templates || []).length) + ' 条'),
           ),
           h('label', { className: 'xhs-label' }, '触发词（回车添加）'),
