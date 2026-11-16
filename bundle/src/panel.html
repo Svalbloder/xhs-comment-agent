@@ -723,11 +723,7 @@ function renderScripts(path){
       '<div class="flex">' +
         '<input type="checkbox" data-f="enabled" style="width:auto"' + (s.enabled !== false ? ' checked' : '') + '>' +
         '<strong>' + esc(s.name) + '</strong>' +
-        '<select data-f="mode" style="width:auto;padding:3px 6px;font-size:12px">' +
-          '<option value="template"' + (s.mode === 'template' ? ' selected' : '') + '>template · 原样用话术</option>' +
-          '<option value="hybrid"' + (s.mode === 'hybrid' ? ' selected' : '') + '>hybrid · 模型改写</option>' +
-          '<option value="llm"' + (s.mode === 'llm' ? ' selected' : '') + '>llm · 模型自由写</option>' +
-        '</select>' +
+        '<span class="pill" title="话术只作参考，最终由模型结合当前评论改写">AI 改写</span>' +
         '<span class="pill">' + (s.templates || []).length + ' 条</span>' +
         '<div class="sp"></div>' +
         '<span class="hint">优先级</span>' +
@@ -763,7 +759,6 @@ function collectScripts(){
     const tplRaw = box.querySelector('[data-f="templates"]').value
     return Object.assign({}, s, {
       enabled: box.querySelector('[data-f="enabled"]').checked,
-      mode: box.querySelector('[data-f="mode"]').value,
       priority: +box.querySelector('[data-f="priority"]').value || 0,
       match: Object.assign({}, s.match, {
         any: matchRaw.split(/[,，\n]/).map(function(x){ return x.trim() }).filter(Boolean)

@@ -10,7 +10,7 @@
  *
  * token 用量来自 llm 流里的 { type:'usage' } chunk，是真实值，不做估算。
  */
-import { matchScene, pickTemplate, checkReply, styleSamples, isSkippableAuthor, isBlacklistedComment, isBlockedIp } from './scripts.js'
+import { matchScene, checkReply, styleSamples, isSkippableAuthor, isBlacklistedComment, isBlockedIp } from './scripts.js'
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
@@ -179,7 +179,7 @@ export function createRunner(deps) {
 
   async function generateReply(note, comment, rules, scene = null) {
     const rs = rules.reply_style ?? {}
-    const samples = scene ? styleSamples(scene, 3) : []
+    const samples = scene ? styleSamples(scene, 4) : []
     const maxChars = scene
       ? Number(readScripts()?.global?.max_chars ?? rs.max_chars ?? 120)
       : (rs.max_chars ?? 60)
@@ -191,7 +191,15 @@ export function createRunner(deps) {
       '不许做诊断结论、不许承诺疗效、不许提机构或医生姓名。',
       rs.banned_words?.length ? `禁止出现这些词：${rs.banned_words.join('、')}` : '',
       samples.length
-        ? `下面是同类真实用户在这种笔记下的说法，只学语气和角度，不要照抄原句：\n- ${samples.join('\n- ')}`
+        ? [
+          '下面是同类真实用户在这种笔记下说过的话，作为「话术参考」：',
+          ...samples.map((s) => '- ' + s),
+          '',
+          '写的时候必须遵守：',
+          '1) 结合上方「对方评论」的具体内容回应，不要答非所问；',
+          '2) 只借用参考里的角度和经验，必须用自己的话重新组织，禁止整句照抄；',
+          '3) 不要比对方说得更长，控制在 1~2 句。',
+        ].join('\n')
         : '',
       rs.example_good?.length ? `正面示例：\n- ${rs.example_good.join('\n- ')}` : '',
       rs.example_bad?.length ? `绝对不要这样写：\n- ${rs.example_bad.join('\n- ')}` : '',
@@ -403,19 +411,9 @@ export function createRunner(deps) {
         let text = ''
         let meta = {}
         try {
-          if (scene && scene.mode === 'template') {
-            const pick = pickTemplate(scriptsLib, scene, state.recentReplies ?? [], state.templateUsage ?? {})
-            if (!pick) {
-              // 该场景的话术最近都用过，宁可不回也不复读
-              patch({ skippedRepeat: (state.job?.skippedRepeat ?? 0) + 1 })
-              continue
-            }
-            text = pick.text
-            meta = { sceneId: scene.id, sceneName: scene.name, templateKey: pick.key }
-          } else {
-            text = await generateReply(note, c, rules, scene)
-            meta = scene ? { sceneId: scene.id, sceneName: scene.name } : {}
-          }
+          // 固定行为：一律「参考话术库 + 结合当前评论」由模型改写，不再有纯模板直发。
+          text = await generateReply(note, c, rules, scene)
+          meta = scene ? { sceneId: scene.id, sceneName: scene.name } : {}
         } catch (e) {
           addError(`生成文案失败：${errMsg(e)}`, { code: 'llm', noteTitle: note.title, user: c.user })
           continue

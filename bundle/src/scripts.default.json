@@ -22,7 +22,7 @@
       "name": "大小脸 / 脸歪 / 拍照焦虑",
       "enabled": true,
       "priority": 60,
-      "mode": "template",
+      "mode": "hybrid",
       "match": {
         "any": ["大小脸", "脸歪", "歪脸", "脸斜", "嘴歪", "不对称", "一高一低", "后置", "拍照焦虑", "上镜", "脸型"]
       },
@@ -47,7 +47,7 @@
       "name": "成因 / 单侧咀嚼 / 生活习惯",
       "enabled": true,
       "priority": 70,
-      "mode": "template",
+      "mode": "hybrid",
       "match": {
         "any": ["单侧咀嚼", "侧睡", "咬牙", "咬肌", "习惯", "怎么造成", "为什么会", "原因", "口呼吸", "托腮"]
       },
@@ -67,7 +67,7 @@
       "name": "面诊 / 手法调理 / 改善经历",
       "enabled": true,
       "priority": 55,
-      "mode": "template",
+      "mode": "hybrid",
       "match": {
         "any": ["面诊", "手法", "调理", "按摩", "医生", "怎么改善", "怎么调好", "有用吗", "智商税", "靠谱吗"]
       },
@@ -87,7 +87,7 @@
       "name": "下颌关节紊乱 / 弹响 / 疼痛 / 张口受限",
       "enabled": true,
       "priority": 90,
-      "mode": "template",
+      "mode": "hybrid",
       "match": {
         "any": ["弹响", "关节", "张嘴", "张不开", "张口", "疼", "酸痛", "紊乱", "咬合", "颞下", "腮帮子", "响"]
       },
@@ -107,7 +107,7 @@
       "name": "可复性 / 不可复性 / 复位 / 治疗方式",
       "enabled": true,
       "priority": 85,
-      "mode": "template",
+      "mode": "hybrid",
       "match": {
         "any": ["可复", "不可复", "手术", "复位", "颌垫", "咬合板", "热敷", "保守", "治疗", "怎么治"]
       },
@@ -132,7 +132,7 @@
       "name": "复位后维护 / 复发 / 恢复经历",
       "enabled": true,
       "priority": 88,
-      "mode": "template",
+      "mode": "hybrid",
       "match": {
         "any": ["复发", "维护", "保养", "掉了", "会不会好", "多久好", "恢复", "一年"]
       },
