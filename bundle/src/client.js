@@ -271,13 +271,14 @@
         })
       }
 
-      const saveScripts = async () => {
-        if (!scripts) return
+      const saveScripts = async (override) => {
+        const lib = override || scripts
+        if (!lib) return
         setBusy(true)
         const r = await api('/api/scripts', {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
-          body: JSON.stringify(scripts),
+          body: JSON.stringify(lib),
         })
         setBusy(false)
         if (r && r.ok) {
@@ -482,17 +483,39 @@
             h('button', { className: 'xhs-btn', disabled: st.running || busy, onClick: resetStats }, '重置统计'),
           ),
           h('div', { className: 'xhs-row', style: { marginTop: 6 } },
+            h('button', {
+              className: 'xhs-btn' + ((scripts && scripts.global && scripts.global.template_only) ? ' primary' : ''),
+              disabled: busy,
+              onClick: async () => {
+                if (!scripts) { await loadScripts(); return }
+                const next = {
+                  ...scripts,
+                  global: { ...(scripts.global || {}), template_only: !(scripts.global && scripts.global.template_only) },
+                }
+                setScripts(next)
+                await saveScripts(next)
+                setMsg(next.global.template_only ? '已切换：纯模板直发（不调模型）' : '已切换：AI 结合话术改写')
+                setTimeout(() => setMsg(''), 2500)
+              },
+            }, '纯模板：' + ((scripts && scripts.global && scripts.global.template_only) ? '开' : '关')),
+          ),
+          h('div', { className: 'xhs-row', style: { marginTop: 6 } },
             h('button', { className: 'xhs-btn', disabled: !st.running || st.paused, onClick: () => ctrl('pause') }, '暂停'),
             h('button', { className: 'xhs-btn', disabled: !st.paused, onClick: () => ctrl('resume') }, '继续'),
             h('button', { className: 'xhs-btn', disabled: !st.running, onClick: () => ctrl('stop') }, '终止'),
           ),
           h('div', { className: 'xhs-mut', style: { marginTop: 8 } }, '「开始」会一轮接一轮持续跑，直到点「终止」。'),
-          st.requireApproval === false
-            ? h('div', { className: 'xhs-warn', style: { marginTop: 8 } },
-              st.dryRun === false
-                ? '⚠ 人工复核与演练模式都已关闭：生成的回复会直接发到小红书。'
-                : '提醒：人工复核已关闭（演练模式仍开着，不会真发）。')
-            : null,
+          // 警告始终占位（hidden 而非不渲染），避免开关状态变化时把下面的按钮顶来顶去
+          h('div', {
+            className: 'xhs-warn',
+            style: {
+              marginTop: 8,
+              minHeight: 32,
+              visibility: st.requireApproval === false ? 'visible' : 'hidden',
+            },
+          }, st.dryRun === false
+            ? '⚠ 人工复核与演练模式都已关闭：生成的回复会直接发到小红书。'
+            : '提醒：人工复核已关闭（演练模式仍开着，不会真发）。'),
           h('div', { style: { marginTop: 14, paddingTop: 12, borderTop: '1px solid rgba(127,127,127,.25)' } },
             h('div', { className: 'xhs-label', style: { marginTop: 0 } }, '发送管控'),
             h('label', { className: 'xhs-row' },
@@ -511,20 +534,12 @@
               ? ((scripts.scenes || []).length + ' 个场景 · 上限 ' + ((scripts.global || {}).max_chars || '?') + ' 字')
               : '加载中…'),
             h('div', { className: 'xhs-sp' }),
-            h('button', {
-              className: 'xhs-btn' + ((scripts && scripts.global && scripts.global.template_only) ? ' primary' : ''),
-              disabled: busy || !scripts,
-              onClick: () => setScripts({
-                ...scripts,
-                global: { ...(scripts.global || {}), template_only: !(scripts.global && scripts.global.template_only) },
-              }),
-            }, '纯模板：' + ((scripts && scripts.global && scripts.global.template_only) ? '开' : '关')),
             h('button', { className: 'xhs-btn', onClick: loadScripts, disabled: busy }, '刷新'),
             h('button', { className: 'xhs-btn primary', onClick: saveScripts, disabled: busy || !scripts }, '保存'),
           ),
           scriptsMsg ? h('div', { className: 'xhs-mut', style: { marginTop: 6 } }, scriptsMsg) : null,
           h('div', { className: 'xhs-mut', style: { marginTop: 6 } },
-            '「纯模板：开」= 直接把话术原句发出去（不调模型）；关 = AI 参考话术库、结合评论改写。'),
+            '纯模板开关在主控页：开 = 直接发话术原句（不调模型），关 = AI 参考话术库并结合评论改写。'),
           scripts ? h('div', null,
             h('label', { className: 'xhs-label' }, 'AI 改写必须体现的经历（每条强制，纯模板下不生效）'),
             h('textarea', {

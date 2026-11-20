@@ -59,6 +59,10 @@
   .sp{flex:1}
   .toast{position:fixed;right:20px;bottom:20px;background:#232833;border:1px solid var(--line);padding:10px 14px;border-radius:8px;opacity:0;transition:.2s}
   .toast.show{opacity:1}
+  /* 发送管控警告：固定在左下角，不进文档流，出现/消失都不会顶动下面的 UI */
+  #sendGuardWarn{position:fixed;left:20px;bottom:20px;z-index:60;max-width:380px;background:#2a2317;border:1px solid #6b5326;color:#f0c987;border-radius:10px;padding:10px 14px;font-size:12.5px;line-height:1.55;box-shadow:0 8px 24px rgba(0,0,0,.45);display:none}
+  #sendGuardWarn.on{display:block}
+  @media (max-width:720px){#sendGuardWarn{left:12px;right:12px;bottom:12px;max-width:none}}
   .hint{color:var(--mut);font-size:12px}
   .tags{display:flex;flex-wrap:wrap;gap:6px;align-items:center;background:#0d1015;border:1px solid var(--line);border-radius:8px;padding:6px;min-height:42px}
   .tags input{flex:1;min-width:130px;border:0;background:transparent;padding:4px 2px;outline:0;width:auto}
@@ -102,6 +106,7 @@
     <div class="flex" style="justify-content:space-between">
       <strong>主控面板</strong>
       <div class="flex" style="gap:8px">
+        <button class="ghost small" id="btnTplMode" onclick="toggleTemplateMode()">纯模板：未知</button>
         <button class="ghost small" onclick="resetStats()">重置统计</button>
         <span class="pill" id="runState">空闲</span>
       </div>
@@ -130,7 +135,8 @@
       <button id="btnResume" class="ghost" onclick="ctrl('resume')">继续</button>
       <button id="btnStop" class="ghost" onclick="ctrl('stop')">终止</button>
     </div>
-    <div id="sendGuardWarn" class="hint" style="margin-top:10px;display:none;color:var(--warn)"></div>
+    <!-- 警告浮层：fixed 定位，出现/消失都不会影响页面排版 -->
+    <div id="sendGuardWarn"></div>
     <div style="margin-top:14px;padding-top:12px;border-top:1px solid #262b36">
       <label style="display:block;color:var(--fg);margin-bottom:2px">发送管控</label>
       <label class="flex" style="margin-top:8px">
@@ -195,7 +201,6 @@
       <strong>话术库</strong>
       <span class="hint" id="scriptsMeta">加载中…</span>
       <div class="sp"></div>
-      <button class="ghost small" id="btnTplMode" onclick="toggleTemplateMode()">纯模板：未知</button>
       <button class="ghost small" onclick="loadScripts()">刷新</button>
       <button class="ghost small" onclick="exportScripts()">导出 JSON</button>
       <button class="small" onclick="saveScripts()">保存话术库</button>
@@ -617,13 +622,13 @@ function renderControl(st){
   const guard = $('sendGuardWarn')
   if (guard) {
     if (st.requireApproval === false) {
-      guard.style.display = 'block'
       guard.textContent = st.dryRun === false
         ? '⚠ 人工复核与演练模式都已关闭：生成的回复会直接发到小红书。'
         : '提醒：人工复核已关闭（演练模式仍开着，不会真发）。'
+      guard.classList.add('on')
     } else {
-      guard.style.display = 'none'
       guard.textContent = ''
+      guard.classList.remove('on')
     }
   }
 
