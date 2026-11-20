@@ -92,7 +92,7 @@
 <div class="wrap">
   <div class="remote-note">远程模式：可以看进度、开始/暂停/终止，但「发送这条」必须在电脑上点。</div>
   <h1>小红书评论 Agent</h1>
-  <div class="sub">本地控制台 · 规则改动即时生效 · 发送需要你点「发送」</div>
+  <div class="sub">本地控制台 · 规则改动即时生效 · 发送需要你点「发送」 · <span id="buildTag">v{{V}}</span></div>
 
   <div class="card">
     <div class="flex" id="status"><span class="pill">加载中…</span></div>
@@ -873,6 +873,12 @@ async function openLogin(){
     } catch(e){ /* 忽略 */ }
     if(n > 100) clearInterval(timer)
   }, 3000)
+}
+
+// 版本标记没被服务端替换 = 正在看旧页面（宿主还是老代码，或浏览器缓存）
+if ($('buildTag') && $('buildTag').textContent.indexOf('{{V}}') >= 0) {
+  $('buildTag').textContent = '旧页面 · 请 Ctrl+F5'
+  $('buildTag').style.color = 'var(--warn)'
 }
 
 load(); setInterval(load, 15000); setInterval(poll, 2500); loadScripts()

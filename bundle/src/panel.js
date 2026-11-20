@@ -18,9 +18,13 @@ const noteUrl = (feedId, token) =>
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const PAGE_PATH = join(HERE, 'panel.html')
+// 面板上显示插件版本，方便判断浏览器是不是拿到了旧页面
+const PLUGIN_VERSION = (() => {
+  try { return JSON.parse(readFileSync(join(HERE, '..', 'package.json'), 'utf8')).version || '?' } catch { return '?' }
+})()
 // 每次请求现读 panel.html：原来 import 时读一次，改一行 UI 就得重启整个宿主。
 const readPage = () => {
-  try { return readFileSync(PAGE_PATH, 'utf8') } catch { return '<h1>panel.html 缺失</h1>' }
+  try { return readFileSync(PAGE_PATH, 'utf8').replaceAll('{{V}}', PLUGIN_VERSION) } catch { return '<h1>panel.html 缺失</h1>' }
 }
 
 export function startPanel(opts) {
