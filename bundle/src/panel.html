@@ -64,6 +64,8 @@
   #sendGuardWarn.on{display:block}
   @media (max-width:720px){#sendGuardWarn{left:12px;right:12px;bottom:12px;max-width:none}}
   .hint{color:var(--mut);font-size:12px}
+  /* 当前动作/统计这些每轮都会变的文案：单行省略，避免换行导致高度变化 */
+  #runNowText,#runTokens{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .tags{display:flex;flex-wrap:wrap;gap:6px;align-items:center;background:#0d1015;border:1px solid var(--line);border-radius:8px;padding:6px;min-height:42px}
   .tags input{flex:1;min-width:130px;border:0;background:transparent;padding:4px 2px;outline:0;width:auto}
   .tag{display:inline-flex;align-items:center;gap:6px;background:#232833;border-radius:999px;padding:2px 4px 2px 10px;font-size:12px;max-width:100%}

@@ -12,7 +12,7 @@
   const TAB_KIND = 'xhs-comment'
 
   const CSS = `
-  .xhs-pane{display:flex;flex-direction:column;gap:10px;padding:12px;font-size:13px;color:inherit;height:100%;overflow:auto}
+  .xhs-pane{display:flex;flex-direction:column;gap:10px;padding:12px;font-size:13px;color:inherit;height:100%;overflow:auto;position:relative}
   .xhs-row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
   .xhs-sp{flex:1}
   .xhs-chip{display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:999px;border:1px solid currentColor;opacity:.75;font-size:12px}
@@ -39,6 +39,7 @@
   .xhs-tab{padding:4px 10px;border-radius:8px;cursor:pointer;border:1px solid transparent}
   .xhs-tab.on{border-color:rgba(127,127,127,.45);background:rgba(127,127,127,.12)}
   .xhs-warn{color:#e6a23c;font-size:11px}
+  .xhs-float{position:absolute;left:10px;right:10px;bottom:10px;z-index:30;background:#2a2317;border:1px solid #6b5326;color:#f0c987;border-radius:8px;padding:7px 10px;font-size:11.5px;line-height:1.5;box-shadow:0 6px 18px rgba(0,0,0,.45);pointer-events:none}
   .xhs-tags{display:flex;flex-wrap:wrap;gap:6px;align-items:center;border:1px solid rgba(127,127,127,.35);border-radius:8px;padding:6px;min-height:38px;box-sizing:border-box}
   .xhs-tag{display:inline-flex;align-items:center;gap:4px;padding:2px 4px 2px 8px;border-radius:999px;background:rgba(127,127,127,.16);font-size:12px;max-width:100%}
   .xhs-tag-t{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -446,7 +447,8 @@
           h('span', { className: 'xhs-chip' }, '今日 ' + st.quota.dayCount + '/' + st.quota.daily_quota),
           h('span', { className: 'xhs-chip' }, '本小时 ' + st.quota.hourCount + '/' + st.quota.hourly_quota),
         ),
-        msg ? h('div', { className: 'xhs-warn' }, msg) : null,
+        // 提示条改成浮层：绝对定位在面板底部，出现/消失都不推挤上方内容
+        msg ? h('div', { className: 'xhs-float' }, msg) : null,
 
         h('div', { className: 'xhs-tabs' },
           h('div', { className: 'xhs-tab ' + (tab === 'main' ? 'on' : ''), onClick: () => setTab('main') }, '主控'),
