@@ -43,7 +43,7 @@ cd "$env:USERPROFILE\.dsh\xhs-agent"
 4. 托盘退出 DSH 再打开
 5. 右侧栏出现「小红书评论」标签
 
-完整步骤与排错见 [deploy/部署说明.md](deploy/部署说明.md)。
+完整步骤与排错见 [deploy/部署说明.md](deploy/部署说明.md)；换新电脑/迁移见 [deploy/迁移到新机器.md](deploy/迁移到新机器.md)。
 
 ### 方式二：从源码装
 
@@ -176,7 +176,7 @@ bundle/src/            插件源码（零运行时依赖）
   panel.js/.html       本地面板（兜底 UI + HTTP API）
   run.js               执行器：一轮/持续两种模式，暂停/继续/终止，token 统计
   sidecar.js           sidecar 管理：进程/健康检查/REST/登录态/登录窗口
-deploy/                安装器 / 卸载器 / 急救脚本 / 部署说明
+deploy/                安装器 / 卸载器 / 急救脚本 / 部署说明 / 迁移到新机器
 docs/                  事故记录
 ```
 
