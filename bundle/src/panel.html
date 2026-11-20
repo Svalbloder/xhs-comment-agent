@@ -195,13 +195,18 @@
       <strong>话术库</strong>
       <span class="hint" id="scriptsMeta">加载中…</span>
       <div class="sp"></div>
+      <button class="ghost small" id="btnTplMode" onclick="toggleTemplateMode()">纯模板：未知</button>
       <button class="ghost small" onclick="loadScripts()">刷新</button>
       <button class="ghost small" onclick="exportScripts()">导出 JSON</button>
       <button class="small" onclick="saveScripts()">保存话术库</button>
     </div>
     <div class="hint" style="margin-top:6px">
-      一条评论先按「触发词」归到某个场景，再从该场景的话术里挑一条；同一句话不会重复用。
-      发送前统一过合规闸：字数、禁用词、联系方式、报价、与最近回复的相似度。
+      AI 改写模式：先按「触发词」归到场景，把该场景的话术当参考，连同这条评论交给模型重新组织。
+      打开「纯模板」则不调模型，直接发话术原句。发送前统一过合规闸：字数、禁用词、联系方式、报价、相似度。
+    </div>
+    <div style="margin-top:10px">
+      <label>AI 改写必须体现的经历（每条都会强制要求，纯模板模式下不生效）</label>
+      <textarea id="aiStyleHint" rows="2" style="min-height:52px"></textarea>
     </div>
     <div class="row" style="margin-top:12px">
       <div class="col">
@@ -683,8 +688,26 @@ async function poll(){
 /* ---------- 话术库 ---------- */
 let SCRIPTS = null
 
-async function loadScripts(){
-  try{
+// 纯模板开关：开 = 直接用话术原句（不调模型）；关 = AI 结合话术改写
+function refreshTplModeBtn(){
+  const on = !!(SCRIPTS && SCRIPTS.global && SCRIPTS.global.template_only)
+  if(!$('btnTplMode')) return
+  $('btnTplMode').textContent = '纯模板：' + (on ? '开' : '关')
+  $('btnTplMode').className = on ? 'small' : 'ghost small'
+  $('btnTplMode').title = on
+    ? '当前：AI 会把话术原样发出去，不调用模型'
+    : '当前：AI 参考话术库、结合评论改写（每条都会带出「必须体现的经历」）'
+}
+
+async function toggleTemplateMode(){
+  if(!SCRIPTS || !SCRIPTS.global) return
+  SCRIPTS.global.template_only = !SCRIPTS.global.template_only
+  refreshTplModeBtn()
+  await saveScripts(true)
+  toast(SCRIPTS.global.template_only ? '已切换：纯模板直发（不调模型）' : '已切换：AI 结合话术改写')
+}
+
+async function loadScripts(){  try{
     const r = await fetch('/api/scripts')
     const j = await r.json()
     SCRIPTS = j.scripts
@@ -697,6 +720,8 @@ async function loadScripts(){
       renderTags('skipauthor')
       renderTags('skipcomment')
       renderTags('blockip')
+      if($('aiStyleHint')) $('aiStyleHint').value = (SCRIPTS.global && SCRIPTS.global.ai_style_hint) || ''
+      refreshTplModeBtn()
     }
     renderScripts(j.path)
   }catch(e){ $('scriptsMeta').textContent = '加载失败' }
@@ -767,7 +792,7 @@ function collectScripts(){
     })
   })
   lib.search = Object.assign({}, lib.search, { keywords: TAGS.searchkw.slice() })
-  lib.global = Object.assign({}, lib.global, { skip_author_words: TAGS.skipauthor.slice(), skip_comment_words: TAGS.skipcomment.slice(), block_ip_locations: TAGS.blockip.slice() })
+  lib.global = Object.assign({}, lib.global, { skip_author_words: TAGS.skipauthor.slice(), skip_comment_words: TAGS.skipcomment.slice(), block_ip_locations: TAGS.blockip.slice(), template_only: !!(SCRIPTS.global && SCRIPTS.global.template_only), ai_style_hint: ($('aiStyleHint') ? $('aiStyleHint').value.trim() : ((lib.global && lib.global.ai_style_hint) || '')) })
   return lib
 }
 
@@ -785,6 +810,7 @@ async function saveScripts(){
   }
   SCRIPTS = j.scripts
   renderScripts()
+  refreshTplModeBtn()
   const w = (j.warnings && j.warnings.length) ? ('（' + j.warnings.length + ' 条提醒，详见控制台）') : ''
   toast('话术库已保存' + w)
   if(j.warnings && j.warnings.length) console.warn('[话术库提醒]', j.warnings)

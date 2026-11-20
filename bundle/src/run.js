@@ -10,7 +10,7 @@
  *
  * token 用量来自 llm 流里的 { type:'usage' } chunk，是真实值，不做估算。
  */
-import { matchScene, checkReply, styleSamples, isSkippableAuthor, isBlacklistedComment, isBlockedIp } from './scripts.js'
+import { matchScene, pickTemplate, checkReply, styleSamples, isSkippableAuthor, isBlacklistedComment, isBlockedIp } from './scripts.js'
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
@@ -179,6 +179,9 @@ export function createRunner(deps) {
 
   async function generateReply(note, comment, rules, scene = null) {
     const rs = rules.reply_style ?? {}
+    const lib = readScripts()
+    // 话术库里配置的「必须体现的经历」：每条 AI 回复都要自然带出
+    const mustShow = String(lib?.global?.ai_style_hint ?? '').trim()
     const samples = scene ? styleSamples(scene, 4) : []
     const maxChars = scene
       ? Number(readScripts()?.global?.max_chars ?? rs.max_chars ?? 120)
@@ -189,6 +192,7 @@ export function createRunner(deps) {
       rs.tone ? `语气要求：${rs.tone}` : '语气：自然、简短、像人说话，不推销。',
       `硬性要求：不超过 ${maxChars} 个汉字；不要链接、不要联系方式、不要报价。`,
       '不许做诊断结论、不许承诺疗效、不许提机构或医生姓名。',
+      mustShow ? `必须体现的经历（每条都要自然带出，不要生硬堆砌）：${mustShow}` : '',
       rs.banned_words?.length ? `禁止出现这些词：${rs.banned_words.join('、')}` : '',
       samples.length
         ? [
@@ -411,9 +415,20 @@ export function createRunner(deps) {
         let text = ''
         let meta = {}
         try {
-          // 固定行为：一律「参考话术库 + 结合当前评论」由模型改写，不再有纯模板直发。
-          text = await generateReply(note, c, rules, scene)
-          meta = scene ? { sceneId: scene.id, sceneName: scene.name } : {}
+          // 纯模板开关（话术库页可一键切换）：开了就直接用话术，不调模型
+          if (scriptsLib?.global?.template_only) {
+            const pick = pickTemplate(scriptsLib, scene, state.recentReplies ?? [], state.templateUsage ?? {})
+            if (!pick) {
+              patch({ skippedRepeat: (state.job?.skippedRepeat ?? 0) + 1 })
+              continue
+            }
+            text = pick.text
+            meta = { sceneId: scene?.id, sceneName: scene?.name, templateKey: pick.key, mode: 'template' }
+          } else {
+            // 默认：把该场景话术当参考，结合当前评论由模型改写
+            text = await generateReply(note, c, rules, scene)
+            meta = scene ? { sceneId: scene.id, sceneName: scene.name, mode: 'ai' } : { mode: 'ai' }
+          }
         } catch (e) {
           addError(`生成文案失败：${errMsg(e)}`, { code: 'llm', noteTitle: note.title, user: c.user })
           continue

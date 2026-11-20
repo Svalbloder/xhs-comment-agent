@@ -51,6 +51,10 @@ const PRICE_PATTERNS = [
 
 const DEFAULT_GLOBAL = {
   max_chars: 120,
+  // true = 纯模板直发（不调模型）；false = AI 结合话术改写
+  template_only: false,
+  // AI 改写时强制体现的经历（写进提示词，模型必须暗示自己做过）
+  ai_style_hint: '回复里要自然地带出「自己也去做过复位/就诊，后来才好一些」这层意思，像亲历者分享，不要直白推销。',
   min_similarity_gap: 0.82,
   recent_window: 30,
   no_contact: true,
@@ -125,6 +129,7 @@ export function validateScripts(raw) {
   if (typeof g.min_similarity_gap !== 'number' || g.min_similarity_gap <= 0 || g.min_similarity_gap > 1) {
     errors.push('global.min_similarity_gap 必须在 0~1 之间')
   }
+  if (typeof g.template_only !== 'boolean') g.template_only = false
   if (!Array.isArray(g.banned_words)) errors.push('global.banned_words 必须是数组')
   if (!Array.isArray(g.block_ip_locations)) errors.push('global.block_ip_locations 必须是数组')
   if (!Array.isArray(g.skip_comment_words)) errors.push('global.skip_comment_words 必须是数组')

@@ -511,13 +511,31 @@
               ? ((scripts.scenes || []).length + ' 个场景 · 上限 ' + ((scripts.global || {}).max_chars || '?') + ' 字')
               : '加载中…'),
             h('div', { className: 'xhs-sp' }),
+            h('button', {
+              className: 'xhs-btn' + ((scripts && scripts.global && scripts.global.template_only) ? ' primary' : ''),
+              disabled: busy || !scripts,
+              onClick: () => setScripts({
+                ...scripts,
+                global: { ...(scripts.global || {}), template_only: !(scripts.global && scripts.global.template_only) },
+              }),
+            }, '纯模板：' + ((scripts && scripts.global && scripts.global.template_only) ? '开' : '关')),
             h('button', { className: 'xhs-btn', onClick: loadScripts, disabled: busy }, '刷新'),
             h('button', { className: 'xhs-btn primary', onClick: saveScripts, disabled: busy || !scripts }, '保存'),
           ),
           scriptsMsg ? h('div', { className: 'xhs-mut', style: { marginTop: 6 } }, scriptsMsg) : null,
           h('div', { className: 'xhs-mut', style: { marginTop: 6 } },
-            '一条评论先按触发词归场景，再从该场景话术里挑一条；同一句不会重复用。发送前统一过合规闸。'),
+            '「纯模板：开」= 直接把话术原句发出去（不调模型）；关 = AI 参考话术库、结合评论改写。'),
           scripts ? h('div', null,
+            h('label', { className: 'xhs-label' }, 'AI 改写必须体现的经历（每条强制，纯模板下不生效）'),
+            h('textarea', {
+              className: 'xhs-input',
+              style: { minHeight: 52 },
+              value: (scripts.global && scripts.global.ai_style_hint) || '',
+              onChange: (e) => setScripts({
+                ...scripts,
+                global: { ...(scripts.global || {}), ai_style_hint: e.target.value },
+              }),
+            }),
             h('label', { className: 'xhs-label' }, '搜索关键词（就搜这些词，最多前 3 个）'),
             h(ChipField, {
               value: (scripts.search && scripts.search.keywords) || [],
